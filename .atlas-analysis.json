@@ -1,0 +1,107 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "CoW Fee Module",
+  "projectDescription": "Safe module for automated fee collection and swapping on CoW Protocol across multiple EVM chains",
+  "theme": "aspen",
+  "primaryColor": "#7c7c7c",
+  "lightColor": "#0d0d0d",
+  "darkColor": "#dedede",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "pages": [
+              "getting-started/installation",
+              "getting-started/deployment",
+              "getting-started/configuration"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/keeper",
+              "operations/module-management",
+              "operations/multi-chain"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/enabling-module",
+              "guides/verification",
+              "guides/docker"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Smart Contracts",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "contracts/cowfeemodule",
+              "contracts/interfaces"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "contracts/deployment-script",
+              "contracts/deployed-addresses"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/options"
+            ]
+          },
+          {
+            "group": "Strategies",
+            "pages": [
+              "cli/token-list-strategies",
+              "cli/gas-management"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automated fee collection from CoW Protocol settlement contract",
+    "Safe module integration for secure multi-sig operations",
+    "Multi-chain deployment support (11+ EVM networks)",
+    "Flexible token discovery strategies (explorer API or on-chain events)",
+    "Keeper bot with configurable parameters",
+    "Native token wrapping and token approval management"
+  ],
+  "publicApiSurface": [
+    "COWFeeModule.drip(address[], SwapToken[])",
+    "COWFeeModule.approve(address[])",
+    "COWFeeModule.revoke(Revocation[])",
+    "COWFeeModule.nextValidTo()",
+    "CLI: --network",
+    "CLI: --module",
+    "CLI: --max-orders",
+    "CLI: --buy-amount-slippage-bps",
+    "CLI: --token-list-strategy",
+    "CLI: --lookback-range"
+  ]
+}
