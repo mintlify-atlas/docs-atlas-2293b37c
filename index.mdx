@@ -1,97 +1,79 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "CoW Fee Module"
+description: "Safe module for automated fee collection and swapping on CoW Protocol"
 ---
 
-## Setting up
+<div style={{
+  background: 'linear-gradient(135deg, #041423 0%, #0d0d0d 100%)',
+  padding: '4rem 2rem',
+  borderRadius: '8px',
+  marginBottom: '3rem',
+  border: '1px solid rgba(124, 124, 124, 0.2)'
+}}>
+  <h1 style={{
+    fontSize: '2.5rem',
+    fontWeight: '700',
+    color: '#E1E6EB',
+    marginBottom: '1rem',
+    textAlign: 'center'
+  }}>
+    CoW Fee Module
+  </h1>
+  <p style={{
+    fontSize: '1.25rem',
+    color: '#7c7c7c',
+    textAlign: 'center',
+    maxWidth: '800px',
+    margin: '0 auto'
+  }}>
+    Automated fee collection from CoW Protocol settlement contract with Safe module integration for secure multi-sig operations across 11+ EVM networks
+  </p>
+</div>
 
-Get your documentation site up and running in minutes.
+## Key Features
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Automated Fee Collection" icon="robot" href="/introduction">
+    Automatically collect and swap fees from CoW Protocol settlement contract with configurable parameters
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Safe Module Integration" icon="shield" href="/architecture">
+    Secure multi-sig operations through Gnosis Safe module architecture
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Multi-Chain Support" icon="network-wired" href="/operations/multi-chain">
+    Deploy and operate across 11+ EVM networks including Ethereum, Gnosis, Arbitrum, and more
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Flexible Token Discovery" icon="magnifying-glass" href="/cli/token-list-strategies">
+    Choose between explorer API or on-chain event strategies for token discovery
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Getting Started
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Set up your development environment with Foundry and TypeScript dependencies
+  </Card>
+  <Card title="Deploy Module" icon="rocket" href="/getting-started/deployment">
+    Deploy the COWFeeModule smart contract to your target network
+  </Card>
+  <Card title="Configuration" icon="gear" href="/getting-started/configuration">
+    Configure environment variables and module parameters
+  </Card>
+  <Card title="Enable Module" icon="toggle-on" href="/guides/enabling-module">
+    Enable the module on your Safe to start collecting fees
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Explore Documentation
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={3}>
+  <Card title="Smart Contracts" icon="file-contract" href="/contracts/cowfeemodule">
+    Explore the COWFeeModule contract and its interfaces
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Learn about the keeper bot CLI commands and options
+  </Card>
+  <Card title="Operations Guide" icon="gears" href="/operations/keeper">
+    Run the keeper bot and manage module operations
+  </Card>
+</CardGroup>

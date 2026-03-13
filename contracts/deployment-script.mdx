@@ -1,0 +1,298 @@
+---
+title: Deployment Script
+description: Guide to deploying the COWFeeModule contract
+---
+
+## Overview
+
+The COWFeeModule uses a Foundry script for deployment. The script reads configuration from environment variables and deploys the contract with the specified parameters.
+
+**Script Location:** `script/DeployCOWFeeModule.s.sol`
+
+## Deployment Script
+
+```solidity
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity ^0.8;
+
+import {Script} from "forge-std/Script.sol";
+import {COWFeeModule, ISafe} from "src/COWFeeModule.sol";
+
+contract DeployCOWFeeModule is Script {
+    function run() external {
+        address receiver = vm.envAddress("RECEIVER");
+        address wrappedNativeToken = vm.envAddress("WRAPPED_NATIVE_TOKEN");
+        address keeper = vm.envAddress("KEEPER");
+        address settlement = vm.envAddress("SETTLEMENT");
+        bytes32 appData = vm.envBytes32("APP_DATA");
+        bool shouldEnableModule = vm.envOr("SHOULD_ENABLE_MODULE", false);
+        address targetSafe = vm.envAddress("TARGET_SAFE");
+        uint256 minOut = vm.envUint("MIN_OUT");
+
+        vm.broadcast();
+        COWFeeModule module =
+            new COWFeeModule(settlement, targetSafe, wrappedNativeToken, keeper, appData, receiver, minOut);
+
+        // only useful for local anvil setup
+        if (shouldEnableModule) {
+            vm.broadcast(receiver);
+            ISafe(receiver).enableModule(address(module));
+        }
+    }
+}
+```
+
+## Environment Variables
+
+The deployment script requires the following environment variables to be set:
+
+### Required Variables
+
+<ParamField path="RECEIVER" type="address" required>
+  Address that will receive the swapped tokens. This is the destination for all fee proceeds.
+  
+  **Example:** `0x1234567890123456789012345678901234567890`
+</ParamField>
+
+<ParamField path="WRAPPED_NATIVE_TOKEN" type="address" required>
+  Address of the wrapped native token contract (WETH, WMATIC, etc.). All fees will be swapped to this token.
+  
+  **Examples:**
+  - Ethereum Mainnet: `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` (WETH)
+  - Gnosis Chain: `0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d` (WXDAI)
+  - Polygon: `0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270` (WMATIC)
+</ParamField>
+
+<ParamField path="KEEPER" type="address" required>
+  Address authorized to call the module's functions (drip, approve, revoke). Only this address can trigger fee collection operations.
+  
+  **Example:** `0xabcdefabcdefabcdefabcdefabcdefabcdefabcd`
+</ParamField>
+
+<ParamField path="SETTLEMENT" type="address" required>
+  Address of the CoW Protocol GPv2Settlement contract.
+  
+  **Settlement Addresses (same on all chains):**
+  - `0x9008D19f58AAbD9eD0D60971565AA8510560ab41`
+</ParamField>
+
+<ParamField path="APP_DATA" type="bytes32" required>
+  CoW Protocol appData identifier for orders created by this module. This is used to identify orders in the CoW Protocol system.
+  
+  **Example:** `0x0000000000000000000000000000000000000000000000000000000000000001`
+</ParamField>
+
+<ParamField path="TARGET_SAFE" type="address" required>
+  Address of the Safe contract that this module will operate on. The module must be enabled on this Safe.
+  
+  **Example:** `0x9999999999999999999999999999999999999999`
+</ParamField>
+
+<ParamField path="MIN_OUT" type="uint256" required>
+  Minimum output amount (in wei) required for transfers. This prevents dust amounts from being processed.
+  
+  **Examples:**
+  - `1000000000000000` (0.001 ETH)
+  - `10000000000000000` (0.01 ETH)
+  - `100000000000000000` (0.1 ETH)
+</ParamField>
+
+### Optional Variables
+
+<ParamField path="SHOULD_ENABLE_MODULE" type="bool" default="false">
+  Whether to automatically enable the module on the Safe after deployment. Only useful for local testing with Anvil.
+  
+  **Warning:** For production deployments, leave this as `false` and enable the module through the Safe's multisig.
+  
+  **Example:** `true` or `false`
+</ParamField>
+
+## Deployment Steps
+
+### 1. Set Up Environment
+
+Create a `.env` file in your project root:
+
+```bash
+# Network configuration
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+PRIVATE_KEY=your_private_key_here
+
+# COWFeeModule configuration
+RECEIVER=0x1234567890123456789012345678901234567890
+WRAPPED_NATIVE_TOKEN=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+KEEPER=0xabcdefabcdefabcdefabcdefabcdefabcdefabcd
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+APP_DATA=0x0000000000000000000000000000000000000000000000000000000000000001
+TARGET_SAFE=0x9999999999999999999999999999999999999999
+MIN_OUT=10000000000000000
+
+# Optional: only for local testing
+# SHOULD_ENABLE_MODULE=false
+```
+
+### 2. Load Environment Variables
+
+```bash
+source .env
+```
+
+### 3. Run Deployment Script
+
+#### Dry Run (Simulation)
+
+Test the deployment without broadcasting transactions:
+
+```bash
+forge script script/DeployCOWFeeModule.s.sol:DeployCOWFeeModule \
+  --rpc-url $RPC_URL \
+  -vvvv
+```
+
+#### Deploy to Network
+
+Deploy the contract to the specified network:
+
+```bash
+forge script script/DeployCOWFeeModule.s.sol:DeployCOWFeeModule \
+  --rpc-url $RPC_URL \
+  --broadcast \
+  --verify \
+  -vvvv
+```
+
+**Flags:**
+- `--broadcast`: Actually send transactions to the network
+- `--verify`: Verify the contract on Etherscan (requires `ETHERSCAN_API_KEY`)
+- `-vvvv`: Verbose output for debugging
+
+### 4. Enable Module on Safe
+
+After deployment, the module must be enabled on the target Safe. This requires a transaction from the Safe's owner(s).
+
+**Via Safe UI:**
+1. Go to your Safe at https://app.safe.global
+2. Navigate to Settings > Modules
+3. Click "Add Module"
+4. Enter the deployed module address
+5. Sign and execute the transaction
+
+**Via CLI:**
+
+```javascript
+// Using ethers.js
+const safe = await ethers.getContractAt("ISafe", TARGET_SAFE);
+const tx = await safe.enableModule(MODULE_ADDRESS);
+await tx.wait();
+```
+
+## Network-Specific Examples
+
+### Ethereum Mainnet
+
+```bash
+# .env for Ethereum Mainnet
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+WRAPPED_NATIVE_TOKEN=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+MIN_OUT=10000000000000000  # 0.01 ETH
+```
+
+### Gnosis Chain
+
+```bash
+# .env for Gnosis Chain
+RPC_URL=https://rpc.gnosischain.com
+WRAPPED_NATIVE_TOKEN=0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+MIN_OUT=1000000000000000000  # 1 XDAI
+```
+
+### Polygon
+
+```bash
+# .env for Polygon
+RPC_URL=https://polygon-rpc.com
+WRAPPED_NATIVE_TOKEN=0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+MIN_OUT=10000000000000000000  # 10 MATIC
+```
+
+### Arbitrum One
+
+```bash
+# .env for Arbitrum One
+RPC_URL=https://arb1.arbitrum.io/rpc
+WRAPPED_NATIVE_TOKEN=0x82aF49447D8a07e3bd95BD0d56f35241523fBab1
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+MIN_OUT=10000000000000000  # 0.01 ETH
+```
+
+## Local Development (Anvil)
+
+For local testing with Anvil:
+
+```bash
+# Terminal 1: Start Anvil
+anvil
+
+# Terminal 2: Deploy
+SHOULD_ENABLE_MODULE=true \
+RPC_URL=http://localhost:8545 \
+PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+forge script script/DeployCOWFeeModule.s.sol:DeployCOWFeeModule \
+  --rpc-url $RPC_URL \
+  --broadcast
+```
+
+## Post-Deployment Verification
+
+After deployment, verify the following:
+
+1. **Contract Deployed:** Check that the contract exists at the deployed address
+2. **Module Enabled:** Verify the module is enabled on the target Safe
+3. **Configuration:** Read the immutable variables to confirm correct setup
+
+```bash
+# Verify configuration
+cast call $MODULE_ADDRESS "keeper()" --rpc-url $RPC_URL
+cast call $MODULE_ADDRESS "receiver()" --rpc-url $RPC_URL
+cast call $MODULE_ADDRESS "minOut()" --rpc-url $RPC_URL
+```
+
+## Troubleshooting
+
+### "Module not enabled" Error
+
+The module must be enabled on the Safe before it can execute transactions. Enable it through the Safe UI or via a Safe transaction.
+
+### "OnlyKeeper" Error
+
+Only the configured keeper address can call module functions. Verify you're using the correct address.
+
+### Gas Estimation Errors
+
+If you encounter gas estimation errors during deployment, try:
+- Adding `--gas-estimate-multiplier 200` to the forge command
+- Manually specifying gas limit with `--gas-limit 5000000`
+
+### Contract Verification Failed
+
+Ensure you have set `ETHERSCAN_API_KEY` in your environment:
+
+```bash
+export ETHERSCAN_API_KEY=your_api_key_here
+```
+
+For other block explorers, configure the appropriate API key and endpoint in `foundry.toml`.
+
+## Security Checklist
+
+- [ ] Double-check all environment variables before deployment
+- [ ] Verify the keeper address is secure and controlled
+- [ ] Confirm the target Safe address is correct
+- [ ] Set an appropriate `MIN_OUT` value for your use case
+- [ ] DO NOT set `SHOULD_ENABLE_MODULE=true` in production
+- [ ] Verify the contract on the block explorer after deployment
+- [ ] Test module functionality on testnet before mainnet deployment
+- [ ] Keep private keys secure and never commit them to version control

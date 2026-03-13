@@ -1,0 +1,402 @@
+---
+title: Module Management
+description: Managing COW Fee Module operations including approvals, revocations, and fee collection
+---
+
+The COW Fee Module provides three key functions for managing token approvals and fee collection. These operations are restricted to the keeper address only.
+
+## Access Control
+
+All module management functions use the `onlyKeeper` modifier:
+
+```solidity
+modifier onlyKeeper() {
+    if (msg.sender != keeper) {
+        revert OnlyKeeper();
+    }
+    _;
+}
+```
+
+<Warning>
+Only the keeper address can call `approve()`, `revoke()`, and `drip()`. Calls from other addresses will revert with `OnlyKeeper()` error.
+</Warning>
+
+## The Keeper Role
+
+The keeper address is set during module deployment and cannot be changed. The keeper is responsible for:
+
+- Monitoring token balances in the Settlement contract
+- Approving tokens for trading via the Vault Relayer
+- Creating presignatures for swap orders
+- Revoking unnecessary approvals for security
+- Collecting and swapping accumulated fees
+
+### Keeper Permissions
+
+The keeper can:
+
+✅ Call `approve()` to grant token approvals
+
+✅ Call `revoke()` to remove token approvals
+
+✅ Call `drip()` to execute fee collection
+
+✅ Initiate transactions through the Safe module interface
+
+The keeper cannot:
+
+❌ Withdraw tokens directly
+
+❌ Change module parameters
+
+❌ Disable the module (only the Safe can do this)
+
+## Module Functions
+
+### approve()
+
+Approves tokens held by the Settlement contract to be spent by the Vault Relayer.
+
+#### Function Signature
+
+```solidity
+function approve(address[] calldata _tokens) external onlyKeeper
+```
+
+#### Parameters
+
+- `_tokens`: Array of token addresses to approve
+
+#### Behavior
+
+1. Creates max approval (`type(uint256).max`) for each token
+2. Approval is granted to the `vaultRelayer` address
+3. Executes via Safe's `execTransactionFromModule` through Settlement's `settle()` function
+
+#### Use Cases
+
+- Initial setup: Approve commonly traded tokens before they accumulate
+- Maintenance: Approve tokens after allowance has been consumed
+- Recovery: Re-approve tokens if revoked or if approval was insufficient
+
+<Note>
+Typically, approvals are handled automatically by the `drip()` function. Manual `approve()` calls are only needed for pre-approving tokens or fixing approval issues.
+</Note>
+
+#### Usage with Cast
+
+```bash
+# Encode the function call
+cast calldata "approve(address[])" "[0x6B175474E89094C44Da98b954EedeAC495271d0F,0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48]"
+```
+
+The keeper would then call this function through the module.
+
+### revoke()
+
+Revokes token approvals to specific spenders.
+
+#### Function Signature
+
+```solidity
+struct Revocation {
+    address token;
+    address spender;
+}
+
+function revoke(Revocation[] calldata _revocations) external onlyKeeper
+```
+
+#### Parameters
+
+- `_revocations`: Array of revocation structs, each containing:
+  - `token`: The token contract address
+  - `spender`: The spender address to revoke approval from
+
+#### Behavior
+
+1. Sets allowance to `0` for each token-spender pair
+2. Executes via Safe's `execTransactionFromModule` through Settlement's `settle()` function
+
+#### Use Cases
+
+- **Security**: Revoke approvals that are no longer needed
+- **Incident response**: Remove approvals if a spender contract is compromised
+- **Cleanup**: Clear outdated approvals from deprecated contracts
+
+#### Usage with Cast
+
+```bash
+# Revoke approval for DAI to Vault Relayer
+cast calldata "revoke((address,address)[])" "[(0x6B175474E89094C44Da98b954EedeAC495271d0F,0xC92E8bdf79f0507f65a392b0ab4667716BFE0110)]"
+```
+
+<Tip>
+Regularly audit active approvals and revoke any that are no longer necessary to minimize attack surface.
+</Tip>
+
+### drip()
+
+The main function for collecting fees. It approves tokens, creates presignatures for CoW Protocol orders, wraps native tokens, and transfers wrapped native tokens to the receiver.
+
+#### Function Signature
+
+```solidity
+struct SwapToken {
+    address token;
+    uint256 sellAmount;
+    uint256 buyAmount;
+}
+
+function drip(
+    address[] calldata _approveTokens,
+    SwapToken[] calldata _swapTokens
+) external onlyKeeper
+```
+
+#### Parameters
+
+- `_approveTokens`: Array of token addresses that need approval before swapping
+- `_swapTokens`: Array of swap details for each token:
+  - `token`: Token contract address
+  - `sellAmount`: Amount to sell (in token's decimals)
+  - `buyAmount`: Minimum amount to receive (in wrapped native token decimals)
+
+#### Behavior
+
+The `drip()` function performs multiple operations in a single transaction:
+
+<Steps>
+
+<Step title="Check native token balance">
+Checks if the Settlement contract has native tokens (ETH/xDAI/etc.):
+
+```solidity
+uint256 nativeBalance = address(settlement).balance;
+bool hasToWrapNativeToken = nativeBalance >= minOut;
+```
+</Step>
+
+<Step title="Calculate wrapped native balance">
+Calculates total wrapped native token balance:
+
+```solidity
+uint256 wrappedNativeBalance = 
+    (hasToWrapNativeToken ? nativeBalance : 0) + 
+    wrappedNativeTokenContract.balanceOf(address(settlement));
+bool hasToTransferWrappedNativeToken = wrappedNativeBalance >= minOut;
+```
+</Step>
+
+<Step title="Approve tokens">
+Creates approval interactions for tokens in `_approveTokens`:
+
+```solidity
+// Max approve each token to VaultRelayer
+IERC20(token).approve(vaultRelayer, type(uint256).max);
+```
+</Step>
+
+<Step title="Create presignatures">
+For each token in `_swapTokens`:
+
+1. Validates `buyAmount >= minOut` (reverts with `BuyAmountTooSmall()` if not)
+2. Constructs a CoW Protocol order:
+   - `sellToken`: The token being swapped
+   - `buyToken`: Wrapped native token
+   - `sellAmount`: Full amount to sell
+   - `buyAmount`: Minimum amount to receive
+   - `validTo`: Next 2-hour epoch boundary (deterministic)
+   - `kind`: Sell order
+   - `partiallyFillable`: true
+   - `receiver`: Module's configured receiver address
+3. Computes the order digest and creates presignature
+4. Calls `settlement.setPreSignature(preSignature, true)`
+</Step>
+
+<Step title="Wrap native tokens (if needed)">
+If native balance >= minOut:
+
+```solidity
+IWrappedNativeToken(wrappedNativeToken).deposit{value: nativeBalance}();
+```
+</Step>
+
+<Step title="Transfer wrapped native tokens (if needed)">
+If total wrapped balance >= minOut:
+
+```solidity
+IERC20(wrappedNativeToken).transfer(receiver, wrappedNativeBalance);
+```
+</Step>
+
+<Step title="Execute via Safe module">
+All interactions are batched and executed through:
+
+```solidity
+settlement.settle(
+    tokens: [],
+    clearingPrices: [],
+    trades: [],
+    interactions: [[], approveAndDripInteractions, []]
+);
+```
+
+Called via Safe's `execTransactionFromModuleReturnData()`.
+</Step>
+
+</Steps>
+
+#### Order Validity Period
+
+Orders are created with a deterministic `validTo` timestamp:
+
+```solidity
+function nextValidTo() public view returns (uint32) {
+    uint256 remainder = block.timestamp % 1 hours;
+    return uint32((block.timestamp - remainder) + 2 hours);
+}
+```
+
+This rounds to the next 2-hour epoch, allowing the keeper to post orders to the orderbook before calling `drip()` on-chain.
+
+#### Validation
+
+<Warning>
+The `drip()` function will revert with `BuyAmountTooSmall()` if any token's `buyAmount` is less than the module's `minOut` parameter.
+</Warning>
+
+Ensure all tokens meet the minimum output requirement before calling.
+
+#### Usage with Cast
+
+Manually encoding a drip call:
+
+```bash
+# Encode drip with approvals and swaps
+cast calldata "drip(address[],(address,uint256,uint256)[])" \
+  "[0x6B175474E89094C44Da98b954EedeAC495271d0F]" \
+  "[(0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48,1000000,500000000000000000)]"
+```
+
+<Info>
+In practice, the keeper bot (`index.ts`) handles calling `drip()` with the correct parameters automatically.
+</Info>
+
+## Safe Module Integration
+
+All three functions use Safe's module functionality to execute transactions:
+
+```solidity
+function _execFromModule(address _to, bytes memory _cd) 
+    internal 
+    returns (bytes memory) 
+{
+    (bool success, bytes memory returnData) = targetSafe
+        .execTransactionFromModuleReturnData(
+            _to, 
+            0, 
+            _cd, 
+            ISafe.Operation.Call
+        );
+    if (!success) {
+        assembly ("memory-safe") {
+            revert(add(returnData, 0x20), mload(returnData))
+        }
+    }
+    return returnData;
+}
+```
+
+This allows the module to:
+
+- Execute transactions on behalf of the Safe
+- Call Settlement contract functions as the Safe
+- Handle token approvals and transfers from the Safe's perspective
+
+## Using Cast for Module Operations
+
+### Enable the Module on a Safe
+
+```bash
+# Generate calldata
+cast calldata "enableModule(address)" 0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2
+```
+
+Use this calldata in a Safe transaction (via Safe UI or Transaction Builder) to enable the module.
+
+### Disable the Module
+
+Use the [Safe UI Settings page](https://app.safe.global) to disable the module. Navigate to:
+
+1. Select your Safe
+2. Settings → Modules
+3. Find the COW Fee Module
+4. Click Remove
+
+<Warning>
+Disabling the module will prevent the keeper from collecting fees. Only disable if you're deploying a new module version or decommissioning fee collection.
+</Warning>
+
+## Best Practices
+
+### Approval Management
+
+- Let the `drip()` function handle approvals automatically when possible
+- Only use manual `approve()` for pre-approving high-volume tokens
+- Periodically audit and `revoke()` unused approvals
+
+### Gas Optimization
+
+- Batch multiple tokens in a single `drip()` call (up to `max-orders` limit)
+- Consider gas prices when setting `--max-fee-per-gas` in the keeper
+- On L2s, gas is less of a concern—optimize for frequency instead
+
+### Security
+
+- Monitor the keeper address for unauthorized access
+- Keep the keeper private key secure (use hardware wallet or secure key management)
+- Set up alerts for unexpected module transactions
+- Regularly verify the module's configuration parameters
+
+### Monitoring
+
+- Track successful `drip()` calls and accumulated fees
+- Monitor failed transactions and investigate causes
+- Watch for tokens that consistently fail quote filtering
+- Set up notifications for `OnlyKeeper()` or `BuyAmountTooSmall()` errors
+
+## Common Issues
+
+### OnlyKeeper Error
+
+**Cause**: Transaction sent from address other than keeper
+
+**Solution**: Ensure keeper wallet is used for all module operations
+
+### BuyAmountTooSmall Error
+
+**Cause**: Token's expected buyAmount is below `minOut` threshold
+
+**Solution**: 
+- Wait for more tokens to accumulate
+- Adjust `--buy-amount-slippage-bps` if quote is borderline
+- Verify `minOut` parameter is appropriate for current token prices
+
+### Transaction Reverts in Safe
+
+**Cause**: Module might not be enabled, or Safe threshold requires multiple signatures
+
+**Solution**:
+- Verify module is enabled on the Safe
+- Check Safe configuration—modules should execute without additional signatures
+- Review Safe transaction history for clues
+
+### Approval Not Working
+
+**Cause**: VaultRelayer address mismatch or token doesn't support approve
+
+**Solution**:
+- Verify `vaultRelayer` matches the Settlement's vaultRelayer
+- Check if token implements ERC20 approve correctly (some tokens have non-standard implementations)

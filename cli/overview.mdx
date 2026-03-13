@@ -1,0 +1,91 @@
+---
+title: CLI Overview
+description: Introduction to the CoW Fee Module keeper bot command-line interface
+---
+
+The CoW Fee Module keeper bot is a command-line tool that monitors token balances in the Settlement contract and automatically creates swap orders to consolidate fees.
+
+## Basic Usage
+
+The keeper bot requires a private key to sign transactions. Set this as an environment variable:
+
+```bash
+export PRIVATE_KEY="your-private-key-here"
+```
+
+### Running Directly
+
+Run the keeper bot with basic configuration:
+
+```bash
+yarn ts-node index.ts \
+  --network mainnet \
+  --module 0x1234... \
+  --rpc-url $RPC_URL
+```
+
+### Running with Docker
+
+Build and run the keeper bot in a Docker container:
+
+```bash
+# Build the Docker image
+docker build -t cow-fee .
+
+# Run the container
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --max-orders 250 \
+  --rpc-url $RPC_URL \
+  --buy-amount-slippage-bps 100 \
+  --module 0x1234... \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+## How It Works
+
+The keeper bot performs the following operations:
+
+1. **Token Discovery**: Fetches the list of tokens held by the Settlement contract using either the explorer API or on-chain Trade events
+2. **Filtering**: Filters tokens based on swap output value and module configuration
+3. **Order Creation**: Posts swap orders to the CoW Protocol OrderBook API
+4. **Approval & Execution**: Determines which orders require approval and calls `COWFeeModule::drip` to approve and execute swaps
+
+## Configuration
+
+The keeper bot reads configuration from:
+
+- **Environment variables**: `PRIVATE_KEY` (required)
+- **Command-line flags**: Network, RPC URL, module address, and other options
+- **Module contract**: Target safe, receiver, wrapped native token, and other parameters are read from the deployed module
+
+See the [CLI Options](/cli/options) page for a complete list of available flags.
+
+## Network Support
+
+The keeper bot supports the following networks:
+
+- `mainnet` - Ethereum Mainnet
+- `gnosis` - Gnosis Chain
+- `arbitrum` - Arbitrum One
+- `base` - Base
+- `sepolia` - Sepolia Testnet
+
+## Private Key Verification
+
+The keeper bot verifies that the provided private key matches the keeper address configured in the module contract. If they don't match, the bot will exit with an error:
+
+```
+The provided private key belongs to 0xABC..., which doesn't match the keeper (0xDEF...)
+```
+
+This is implemented in `ts/utils/readConfig.ts:119-125`.
+
+## Next Steps
+
+- [CLI Options](/cli/options) - Complete reference of all CLI flags
+- [Token List Strategies](/cli/token-list-strategies) - Learn about token discovery methods
+- [Gas Management](/cli/gas-management) - Configure gas prices for transactions

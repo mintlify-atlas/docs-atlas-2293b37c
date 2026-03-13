@@ -1,0 +1,351 @@
+---
+title: Running the Keeper Bot
+description: Guide to running the COW Fee Module keeper bot for automated fee collection
+---
+
+The keeper bot automatically monitors token balances in the Settlement contract, creates swap orders on CoW Protocol, and executes the `drip()` function to collect fees.
+
+## Prerequisites
+
+- Node.js and Yarn installed
+- Private key for the keeper address (set as `PRIVATE_KEY` environment variable)
+- RPC URL for the target network
+- Deployed COW Fee Module address
+
+<Warning>
+The keeper private key must match the `keeper` address configured in the module. The bot will verify this on startup and exit if there's a mismatch.
+</Warning>
+
+## CLI Options
+
+The keeper bot accepts the following command-line options:
+
+| Option | Description | Default | Required |
+|--------|-------------|---------|----------|
+| `--network <network>` | Network to run on: `mainnet`, `gnosis`, `arbitrum`, `base`, `sepolia`, `avalanche`, `polygon`, `bnb`, `linea`, `plasma`, `ink` | `mainnet` | No |
+| `--rpc-url <rpc-url>` | Custom RPC URL (overrides network default) | Network default | No |
+| `--module <module>` | COWFeeModule contract address | - | Yes |
+| `--max-orders <max-orders>` | Maximum number of orders to place in single drip call | `250` | No |
+| `--buy-amount-slippage-bps <bps>` | Slippage tolerance in basis points to add to quoted buyAmount | `100` (1%) | No |
+| `--token-list-strategy <strategy>` | Strategy for getting token list: `explorer` or `chain` | `explorer` | No |
+| `--lookback-range <n>` | Number of blocks to look back for Trade events (chain strategy only) | `1000` | No |
+| `--max-fee-per-gas <gwei>` | Override maxFeePerGas transaction parameter (in GWEI) | Dynamic | No |
+| `--max-priority-fee-per-gas <gwei>` | Override maxPriorityFeePerGas transaction parameter (in GWEI) | Dynamic | No |
+| `-c, --confirm-drip` | Ask for confirmation before executing drip | `false` | No |
+| `-h, --help` | Display help information | - | No |
+
+## Token List Strategies
+
+The keeper supports two strategies for discovering which tokens to swap:
+
+### Explorer Strategy (Default)
+
+Queries block explorer APIs to get the current token balances:
+
+- **Mainnet**: Uses [Ethplorer API](https://ethplorer.io)
+- **Gnosis**: Uses [Blockscout API](https://gnosis.blockscout.com)
+- **Other networks**: Must use `chain` strategy
+
+**Pros**: Fast, doesn't require many RPC calls
+
+**Cons**: Limited to networks with supported explorers
+
+### Chain Strategy
+
+Scans on-chain `Trade` events from the Settlement contract to discover tokens:
+
+- Looks back N blocks (default 1000, configurable with `--lookback-range`)
+- Extracts all sellToken and buyToken addresses from Trade events
+- Works on any network with RPC access
+
+**Pros**: Works on all networks, no external API dependencies
+
+**Cons**: Requires more RPC calls, slower for large lookback ranges
+
+<Tip>
+Use the `explorer` strategy when available for better performance. Use `chain` strategy for networks without explorer API support or when you need precise control over token discovery.
+</Tip>
+
+## Running the Keeper
+
+<Steps>
+
+<Step title="Set up environment variables">
+Create a `.env` file with your private key:
+
+```bash
+PRIVATE_KEY=0x...
+```
+
+Optionally add custom RPC URLs:
+
+```bash
+RPC_URL=https://your-rpc-endpoint.com
+```
+</Step>
+
+<Step title="Choose your execution method">
+
+<Tabs>
+<Tab title="Direct Execution">
+
+### Install dependencies
+
+```bash
+yarn install
+```
+
+### Run the keeper
+
+```bash
+source .env
+
+yarn ts-node index.ts \
+  --network mainnet \
+  --module 0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2 \
+  --max-orders 250 \
+  --buy-amount-slippage-bps 100
+```
+
+### With custom RPC and token strategy
+
+```bash
+source .env
+
+yarn ts-node index.ts \
+  --network gnosis \
+  --rpc-url $RPC_URL \
+  --module 0x264843e85f8449ee3e9436253f3b8c0282dd4795 \
+  --token-list-strategy chain \
+  --lookback-range 2000
+```
+
+### With gas price overrides
+
+```bash
+yarn ts-node index.ts \
+  --network mainnet \
+  --module 0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2 \
+  --max-fee-per-gas 50 \
+  --max-priority-fee-per-gas 2
+```
+
+</Tab>
+
+<Tab title="Docker">
+
+### Build the Docker image
+
+```bash
+docker build -t cow-fee .
+```
+
+### Run the container
+
+```bash
+source .env
+
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --module 0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2 \
+  --max-orders 250 \
+  --buy-amount-slippage-bps 100
+```
+
+### With custom RPC
+
+```bash
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network arbitrum \
+  --rpc-url https://arb1.arbitrum.io/rpc \
+  --module 0xaf717efcfec02a65101e3ffb3c07234b8705cafc \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+### With confirmation prompt
+
+```bash
+docker run --rm -it \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network base \
+  --module 0xb7ec643b48fe7730ef701d10362a9f8a670ac018 \
+  --confirm-drip
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Monitor execution">
+The keeper will:
+
+1. Load configuration from the module contract
+2. Verify the keeper address matches the private key
+3. Discover tokens using the selected strategy
+4. Query CoW Protocol API for quotes on each token
+5. Filter tokens by minimum output value (`minOut`)
+6. Post orders to the CoW Protocol orderbook
+7. Execute the `drip()` transaction with token approvals and swap details
+8. Exit after completing one cycle
+</Step>
+
+</Steps>
+
+## How It Works
+
+The keeper bot performs the following operations:
+
+### 1. Token Discovery
+
+Based on the `--token-list-strategy`:
+
+- **Explorer**: Queries block explorer APIs for current token holdings
+- **Chain**: Scans Trade events from Settlement contract for last N blocks
+
+### 2. Balance and Allowance Check
+
+For each discovered token:
+
+```typescript
+// Fetch actual balances from Settlement contract
+const balances = await getBalances(provider, settlement, tokenAddresses);
+
+// Check current allowances to VaultRelayer
+const allowances = await getAllowances(provider, settlement, vaultRelayer, tokenAddresses);
+
+// Determine which tokens need approval
+const needsApproval = allowance < balance;
+```
+
+### 3. Quote Filtering
+
+Requests quotes from CoW Protocol orderbook API:
+
+```typescript
+const quote = await orderBookApi.getQuote({
+  sellToken: token.address,
+  sellAmountBeforeFee: balance.toString(),
+  kind: OrderQuoteSideKindSell.SELL,
+  buyToken: wrappedNativeToken,
+  from: settlement,
+});
+
+// Apply slippage tolerance
+const buyAmount = quote.buyAmount * (10000 - buyAmountSlippageBps) / 10000;
+
+// Filter by minimum output
+if (buyAmount >= minOut) {
+  // Include in swap
+}
+```
+
+### 4. Order Posting
+
+Posts orders to CoW Protocol orderbook for all valid tokens.
+
+### 5. Drip Execution
+
+Calls the `drip()` function with:
+
+- Tokens that need approval
+- Swap details (token, sellAmount, buyAmount) for each order
+
+<Info>
+The keeper runs once and exits. For continuous operation, run it on a schedule (e.g., via cron or a task scheduler).
+</Info>
+
+## Troubleshooting
+
+### Keeper Address Mismatch
+
+**Error**: `The provided private key belongs to 0x..., which doesn't match the keeper (0x...)`
+
+**Solution**: Ensure your `PRIVATE_KEY` environment variable corresponds to the keeper address configured in the module.
+
+### Insufficient Funds
+
+**Error**: Transaction fails due to insufficient gas
+
+**Solution**: Ensure the keeper address has enough native tokens to pay for gas fees.
+
+### No Tokens Found
+
+**Issue**: Keeper reports 0 tokens after filtering
+
+**Possible causes**:
+- No tokens in Settlement contract meet the `minOut` threshold
+- Token list strategy not finding tokens (try switching strategies)
+- All tokens lack sufficient liquidity on CoW Protocol
+
+**Solution**: Check token balances in the Settlement contract and verify `minOut` is not too high.
+
+### RPC Rate Limiting
+
+**Issue**: RPC calls failing or timing out when using `chain` strategy
+
+**Solution**:
+- Use `--rpc-url` to specify a dedicated RPC endpoint
+- Reduce `--lookback-range` to scan fewer blocks
+- Switch to `explorer` strategy if available
+
+### Quote API Failures
+
+**Issue**: Many tokens rejected during quote filtering
+
+**Possible causes**:
+- Tokens have insufficient liquidity on CoW Protocol
+- Token is not tradeable (e.g., rebasing token, token with transfer fees)
+
+**Solution**: This is normal behavior. The keeper filters out untradeable tokens automatically.
+
+## Network Examples
+
+### Ethereum Mainnet
+
+```bash
+yarn ts-node index.ts \
+  --network mainnet \
+  --module 0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2
+```
+
+### Gnosis Chain
+
+```bash
+yarn ts-node index.ts \
+  --network gnosis \
+  --module 0x264843e85f8449ee3e9436253f3b8c0282dd4795
+```
+
+### Arbitrum One
+
+```bash
+yarn ts-node index.ts \
+  --network arbitrum \
+  --module 0xaf717efcfec02a65101e3ffb3c07234b8705cafc \
+  --token-list-strategy chain
+```
+
+### Base
+
+```bash
+yarn ts-node index.ts \
+  --network base \
+  --module 0xb7ec643b48fe7730ef701d10362a9f8a670ac018 \
+  --token-list-strategy chain
+```
+
+### Sepolia Testnet
+
+```bash
+yarn ts-node index.ts \
+  --network sepolia \
+  --module 0x456ca0e6abf780140583ef3c8b5be2e7804278a6 \
+  --token-list-strategy chain
+```

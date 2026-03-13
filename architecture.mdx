@@ -1,0 +1,780 @@
+---
+title: Architecture
+description: System architecture, components, and technical workflows of the CoW Fee Module
+---
+
+# System Architecture
+
+The CoW Fee Module is a two-component system that automates fee collection from the CoW Protocol settlement contract. This page provides a detailed technical overview of the architecture, components, and workflows.
+
+## System Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     CoW Protocol Settlement                     │
+│                                                                 │
+│  • Accumulates fees in various tokens                          │
+│  • Executes swaps via vault relayer                            │
+│  • Emits Trade events                                          │
+└────────────────────────────┬───────────────────────────────────┘
+                             │
+                             │ monitors & executes
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+    ┌─────────▼─────────┐        ┌─────────▼─────────┐
+    │  Keeper Bot       │        │  COWFeeModule     │
+    │  (TypeScript)     │───────▶│  (Smart Contract) │
+    │                   │ calls  │                   │
+    │  • Token discovery│        │  • Approvals      │
+    │  • Quote fetching │        │  • Presignatures  │
+    │  • Order posting  │        │  • ETH wrapping   │
+    │  • Batch management│       │  • Token transfers│
+    └───────────────────┘        └─────────┬─────────┘
+                                           │
+                                           │ executes via
+                                           │
+                                  ┌────────▼────────┐
+                                  │   Target Safe   │
+                                  │                 │
+                                  │  • Module owner │
+                                  │  • Enables txs  │
+                                  └─────────────────┘
+```
+
+## Component 1: COWFeeModule Smart Contract
+
+The `COWFeeModule.sol` contract is the on-chain component that executes fee collection operations.
+
+### Contract Structure
+
+Location: `~/workspace/source/src/COWFeeModule.sol`
+
+```solidity
+contract COWFeeModule {
+    // Immutable configuration
+    ISafe public immutable targetSafe;
+    address public immutable wrappedNativeToken;
+    address public immutable keeper;
+    bytes32 public immutable domainSeparator;
+    bytes32 public immutable appData;
+    IGPv2Settlement public immutable settlement;
+    address public immutable vaultRelayer;
+    address public immutable receiver;
+    uint256 public immutable minOut;
+    
+    // Access control
+    modifier onlyKeeper() {
+        if (msg.sender != keeper) {
+            revert OnlyKeeper();
+        }
+        _;
+    }
+}
+```
+
+### Key Functions
+
+#### 1. `drip()` - Main Fee Collection Function
+
+The core function that orchestrates the entire fee collection process.
+
+**Function Signature:**
+```solidity
+function drip(
+    address[] calldata _approveTokens,
+    SwapToken[] calldata _swapTokens
+) external onlyKeeper
+```
+
+**Parameters:**
+- `_approveTokens` - Array of token addresses that need approval to the vault relayer
+- `_swapTokens` - Array of `SwapToken` structs containing:
+  - `token` - Token address to swap
+  - `sellAmount` - Amount to sell
+  - `buyAmount` - Minimum amount to receive
+
+**Workflow:**
+
+<Steps>
+  <Step title="Check Native Token Balance">
+    Reads the native token (ETH) balance of the settlement contract:
+    ```solidity
+    uint256 nativeBalance = address(settlement).balance;
+    bool hasToWrapNativeToken = nativeBalance >= minOut;
+    ```
+  </Step>
+  
+  <Step title="Check Wrapped Native Token Balance">
+    Calculates total wrapped native token (WETH) balance:
+    ```solidity
+    uint256 wrappedNativeBalance =
+        (hasToWrapNativeToken ? nativeBalance : 0) + 
+        wrappedNativeTokenContract.balanceOf(address(settlement));
+    ```
+  </Step>
+  
+  <Step title="Prepare Interactions Array">
+    Constructs an array of interactions to execute via the settlement contract's `settle()` function:
+    - Token approvals (if needed)
+    - Presignature commitments for each swap
+    - Native token wrapping (if balance >= minOut)
+    - Wrapped token transfer to receiver (if balance >= minOut)
+  </Step>
+  
+  <Step title="Create Presignatures">
+    For each token to swap, creates a presignature:
+    ```solidity
+    GPv2Order.Data memory order = GPv2Order.Data({
+        sellToken: IERC20(swapToken.token),
+        buyToken: wrappedNativeTokenContract,
+        receiver: receiver,
+        sellAmount: swapToken.sellAmount,
+        buyAmount: swapToken.buyAmount,
+        validTo: nextValidTo(),
+        appData: appData,
+        feeAmount: 0,
+        kind: GPv2Order.KIND_SELL,
+        partiallyFillable: true,
+        sellTokenBalance: GPv2Order.BALANCE_ERC20,
+        buyTokenBalance: GPv2Order.BALANCE_ERC20
+    });
+    bytes memory preSignature = _computePreSignature(order);
+    ```
+  </Step>
+  
+  <Step title="Execute via Safe Module">
+    Executes all interactions via the Safe's module interface:
+    ```solidity
+    _execInteractions(approveAndDripInteractions);
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The `drip()` function validates that all `buyAmount` values meet the `minOut` threshold to prevent processing dust amounts that might not be economical.
+</Note>
+
+#### 2. `approve()` - Approve Tokens to Vault Relayer
+
+**Function Signature:**
+```solidity
+function approve(address[] calldata _tokens) external onlyKeeper
+```
+
+Approves the specified tokens to be spent by the CoW Protocol vault relayer with maximum allowance:
+
+```solidity
+abi.encodeCall(IERC20.approve, (vaultRelayer, type(uint256).max))
+```
+
+<Info>
+  This function is separate from `drip()` to allow pre-approval of tokens in preparation for swaps, though the `drip()` function can also handle approvals inline.
+</Info>
+
+#### 3. `revoke()` - Revoke Token Approvals
+
+**Function Signature:**
+```solidity
+function revoke(Revocation[] calldata _revocations) external onlyKeeper
+
+struct Revocation {
+    address token;
+    address spender;
+}
+```
+
+Revokes approvals by setting allowance to zero. This is useful for security hygiene or in case of compromised contracts:
+
+```solidity
+abi.encodeCall(IERC20.approve, (revocation.spender, 0))
+```
+
+#### 4. `nextValidTo()` - Deterministic Order Validity
+
+**Function Signature:**
+```solidity
+function nextValidTo() public view returns (uint32)
+```
+
+Calculates a deterministic validity timestamp for orders:
+
+```solidity
+uint256 remainder = block.timestamp % 1 hours;
+return uint32((block.timestamp - remainder) + 2 hours);
+```
+
+**Example:**
+- If current time is `14:37:00`, remainder is `37 minutes`
+- Returns: `14:37:00 - 00:37:00 + 2:00:00 = 16:00:00`
+
+<Note>
+  This deterministic calculation allows the keeper bot to know the exact `validTo` timestamp before calling `drip()`, enabling it to post orders to the order book with matching timestamps.
+</Note>
+
+### Native Token Wrapping Mechanism
+
+The module has special handling for native tokens (ETH) to wrap them into the target asset:
+
+<Steps>
+  <Step title="Check Native Balance">
+    Reads `address(settlement).balance` to determine ETH held by the settlement contract.
+  </Step>
+  
+  <Step title="Wrap if Above Threshold">
+    If `nativeBalance >= minOut`, adds a wrapping interaction:
+    ```solidity
+    IGPv2Settlement.InteractionData({
+        to: wrappedNativeToken,
+        value: nativeBalance,
+        callData: abi.encodeCall(IWrappedNativeToken.deposit, ())
+    })
+    ```
+  </Step>
+  
+  <Step title="Include in Transfer">
+    The wrapped amount is added to the wrapped token balance for the final transfer to receiver.
+  </Step>
+</Steps>
+
+<Warning>
+  Native token wrapping requires the module to send ETH value in the transaction. The Safe must have module execution permissions configured correctly.
+</Warning>
+
+### Safe Module Integration
+
+The contract leverages Gnosis Safe's `execTransactionFromModuleReturnData` to execute operations:
+
+```solidity
+function _execFromModule(address _to, bytes memory _cd) internal returns (bytes memory) {
+    (bool success, bytes memory returnData) =
+        targetSafe.execTransactionFromModuleReturnData(_to, 0, _cd, ISafe.Operation.Call);
+    if (!success) {
+        assembly ("memory-safe") {
+            revert(add(returnData, 0x20), mload(returnData))
+        }
+    }
+    return returnData;
+}
+```
+
+All interactions are bundled into the settlement contract's `settle()` function:
+
+```solidity
+function _execInteractions(IGPv2Settlement.InteractionData[] memory _interactions) internal {
+    address[] memory tokens = new address[](0);
+    uint256[] memory clearingPrices = new uint256[](0);
+    IGPv2Settlement.TradeData[] memory trades = new IGPv2Settlement.TradeData[](0);
+    IGPv2Settlement.InteractionData[][3] memory interactions =
+        [new IGPv2Settlement.InteractionData[](0), _interactions, new IGPv2Settlement.InteractionData[](0)];
+    bytes memory cd = abi.encodeCall(IGPv2Settlement.settle, (tokens, clearingPrices, trades, interactions));
+    _execFromModule(address(settlement), cd);
+}
+```
+
+<Info>
+  By using `settle()` with empty trades and only interactions, the module leverages the settlement contract's permission to execute arbitrary calls on behalf of itself, including token approvals and presignature commitments.
+</Info>
+
+## Component 2: Keeper Bot
+
+The keeper bot is a TypeScript application that monitors the settlement contract and triggers fee collection.
+
+### Entry Point
+
+Location: `~/workspace/source/index.ts`
+
+```typescript
+const main = async () => {
+  const [config, provider] = await readConfig();
+  console.log("Config options:\n", config.options);
+
+  const wallet = new ethers.Wallet(config.privateKey, provider);
+  console.log("Wallet address:", wallet.address);
+
+  await dripItAll(config, wallet, provider);
+  process.exit(0);
+};
+```
+
+### Main Workflow: `dripItAll()`
+
+Location: `~/workspace/source/ts/drip/dripItAll.ts`
+
+The main orchestration function that coordinates the entire fee collection process:
+
+<Steps>
+  <Step title="Check ETH Balance">
+    ```typescript
+    const ethToWrap = await getEthToWrap(config, provider);
+    console.log("ETH to wrap:", formatUnits(ethToWrap, WETH_DECIMALS));
+    ```
+    Determines how much native ETH will be wrapped.
+  </Step>
+  
+  <Step title="Discover Tokens to Swap">
+    ```typescript
+    const tokensToSwap = await getTokensToSwap(config, provider);
+    ```
+    Uses the configured token discovery strategy to find tokens held by the settlement contract.
+  </Step>
+  
+  <Step title="Batch and Swap Tokens">
+    ```typescript
+    for (let i = 0; i < tokensToSwap.length; i += config.maxOrders) {
+      const toSwap = tokensToSwap.slice(i, i + config.maxOrders);
+      await swapTokens(moduleContract, config, signer, toSwap);
+      break; // Only processes first batch
+    }
+    ```
+    Processes tokens in batches (max 250 orders by default).
+  </Step>
+  
+  <Step title="Handle ETH-Only Case">
+    ```typescript
+    else if (ethToWrap.gt(0)) {
+      // Handles the case where there's no tokens to swap, 
+      // but we still have to drip to wrap ETH
+      await drip({...});
+    }
+    ```
+    If there are no tokens to swap but ETH to wrap, still calls `drip()`.
+  </Step>
+  
+  <Step title="Report Expected Proceeds">
+    ```typescript
+    const expectedToReceive = expectedBuy.add(ethToWrap);
+    console.log(`Expecting proceeds of ${expectedUnitsFormatted} ${symbol}`);
+    ```
+    Logs the expected proceeds from all swaps plus wrapped ETH.
+  </Step>
+</Steps>
+
+### Token Discovery Strategies
+
+The keeper bot supports two strategies for discovering tokens held by the settlement contract:
+
+#### Strategy 1: Explorer API (`--token-list-strategy explorer`)
+
+Location: `~/workspace/source/ts/drip/getTokenBalances.ts`
+
+Uses block explorer APIs to fetch token balances:
+
+**Ethereum Mainnet - Ethplorer:**
+```typescript
+const getTokenInfosFromEthPlorer = async (address: string): Promise<ITokenInfo[]> => {
+  const { data } = await axios.get<IEthplorerResponse>(
+    `https://api.ethplorer.io/getAddressInfo/${address}?apiKey=freekey`
+  );
+  return data.tokens.map((token) => ({
+    address: token.tokenInfo.address,
+    decimals: +token.tokenInfo.decimals,
+    symbol: token.tokenInfo.symbol,
+    balance: token.rawBalance,
+  }));
+};
+```
+
+**Gnosis Chain - Blockscout:**
+```typescript
+const getTokenInfosFromBlockscout = async (address: string): Promise<ITokenInfo[]> => {
+  const { data } = await axios.get<IBlockscoutResponse[]>(
+    `https://gnosis.blockscout.com/api/v2/addresses/${address}/token-balances`
+  );
+  return data
+    .filter((token) => token.token.type === "ERC-20")
+    .map((token) => ({...}));
+};
+```
+
+<Info>
+  **Pros:** Fast, doesn't require scanning blockchain history
+  
+  **Cons:** Only supports Ethereum mainnet and Gnosis Chain; depends on third-party APIs
+</Info>
+
+#### Strategy 2: On-Chain Events (`--token-list-strategy chain`)
+
+Scans the settlement contract's `Trade` events to discover all tokens that have been traded:
+
+```typescript
+const getTokenInfosFromChain = async (config: IConfig): Promise<ITokenInfo[]> => {
+  const settlement = new ethers.Contract(
+    config.gpv2Settlement,
+    settlementAbi,
+    provider
+  );
+  const tradeFilter = settlement.filters.Trade();
+  const currentBlock = await provider.getBlockNumber();
+
+  const chunks = chunkRange(
+    currentBlock - config.lookbackRange,
+    currentBlock,
+    LOG_FILTER_RANGE
+  );
+  const logRanges = await Promise.all(
+    chunks.map(async ([start, end]) => {
+      return await settlement.queryFilter(tradeFilter, start, end);
+    })
+  );
+  const logs = logRanges.flat();
+
+  const allTokens = Array.from(
+    new Set(
+      logs.map((log) => [log.args!.sellToken, log.args!.buyToken]).flat()
+    ).values()
+  );
+  // ... fetch decimals and return
+};
+```
+
+**Parameters:**
+- `--lookback-range` - Number of blocks to scan (default: 1000)
+- Automatically chunks the range into 1000-block segments to avoid RPC limits
+
+<Info>
+  **Pros:** Works on any chain; doesn't depend on third-party APIs; discovers tokens as soon as they're traded
+  
+  **Cons:** Requires scanning blockchain history; slower for large lookback ranges
+</Info>
+
+### Token Filtering Pipeline
+
+Location: `~/workspace/source/ts/drip/getTokensToSwap.ts`
+
+Tokens go through multiple filtering stages:
+
+<Steps>
+  <Step title="Discovery">
+    Fetch all tokens from the chosen strategy (explorer or chain events).
+  </Step>
+  
+  <Step title="Balance & Allowance Check">
+    ```typescript
+    const [balances, allowances] = await Promise.all([
+      getBalances(provider, config.gpv2Settlement, tokenAddresses),
+      getAllowances(provider, config.gpv2Settlement, config.vaultRelayer, tokenAddresses),
+    ]);
+    ```
+    Fetches current balances and vault relayer allowances using multicall.
+  </Step>
+  
+  <Step title="Liquidity Filter (Quote API)">
+    ```typescript
+    const quotes = await Promise.allSettled(
+      unfilteredWithBalanceAndAllowance.map((token) =>
+        orderBookApi.getQuote({
+          sellToken: token.address,
+          sellAmountBeforeFee: token.balance.toString(),
+          kind: OrderQuoteSideKindSell.SELL,
+          buyToken: config.wrappedNativeToken,
+          from: config.gpv2Settlement,
+        })
+      )
+    );
+    ```
+    Requests quotes from the CoW Protocol order book. Tokens that can't be quoted are filtered out.
+  </Step>
+  
+  <Step title="Apply Slippage Tolerance">
+    ```typescript
+    buyAmount: BigNumber.from(quote.buyAmount)
+      .mul(10000 - config.buyAmountSlippageBps)
+      .div(10000)
+    ```
+    Applies slippage tolerance to the quoted buy amount (default: 100 bps = 1%).
+  </Step>
+  
+  <Step title="Minimum Output Filter">
+    ```typescript
+    const minOutFiltered = quotesFiltered.filter((token) =>
+      BigNumber.from(token.buyAmount).gt(config.minOut)
+    );
+    ```
+    Filters out tokens whose expected output is below the `minOut` threshold.
+  </Step>
+</Steps>
+
+<Note>
+  The quote API filter serves as a liquidity check - tokens without sufficient liquidity to generate a quote are automatically excluded.
+</Note>
+
+### Swap Execution Workflow
+
+Location: `~/workspace/source/ts/drip/swapTokens.ts`
+
+<Steps>
+  <Step title="Get Next Validity Timestamp">
+    ```typescript
+    const nextValidTo = await moduleContract.nextValidTo();
+    ```
+    Calls the contract to get the deterministic validity timestamp.
+  </Step>
+  
+  <Step title="Verify App Data">
+    ```typescript
+    const { appDataHex, appDataContent } = await getAppData();
+    if (appDataHex.toLowerCase() !== config.appData.toLowerCase()) {
+      throw new Error(`appData mismatch: ${appDataHex} != ${config.appData}`);
+    }
+    ```
+    Ensures the app data matches the module's configuration.
+  </Step>
+  
+  <Step title="Post Orders to Order Book">
+    ```typescript
+    const { failedOrders, successfullyPostedOrders, toActuallySwap } =
+      await postOrders(orderBookApi, appDataHex, nextValidTo, appDataContent, config, toSwap);
+    ```
+    Posts presigned orders to the CoW Protocol order book API.
+  </Step>
+  
+  <Step title="Prepare Approval and Drip Data">
+    ```typescript
+    const toApprove = toActuallySwap
+      .filter((token) => token.needsApproval)
+      .map((token) => token.address);
+
+    const toDrip = toActuallySwap.map((token) => ({
+      token: token.address,
+      sellAmount: token.balance,
+      buyAmount: token.buyAmount,
+    }));
+    ```
+    Separates tokens needing approval from swap data.
+  </Step>
+  
+  <Step title="Execute Drip Transaction">
+    ```typescript
+    await drip({
+      chainId: config.chainId,
+      moduleContract,
+      signer: signerWithProvider,
+      toApprove,
+      toDrip,
+      confirmDrip: config.confirmDrip,
+      maxFeePerGas: config.maxFeePerGas,
+      maxPriorityFeePerGas: config.maxPriorityFeePerGas,
+    });
+    ```
+    Sends the transaction to call the module's `drip()` function.
+  </Step>
+</Steps>
+
+### Order Posting
+
+Location: `~/workspace/source/ts/drip/postOrders.ts`
+
+```typescript
+const orders = await Promise.allSettled(
+  toSwap.map((token) =>
+    orderBookApi.sendOrder({
+      sellToken: token.address,
+      buyToken: config.wrappedNativeToken,
+      sellAmount: token.balance.toString(),
+      buyAmount: token.buyAmount.toString(),
+      validTo: nextValidTo,
+      appData: appDataContent,
+      appDataHash: appDataHex,
+      feeAmount: "0",
+      kind: OrderKind.SELL,
+      partiallyFillable: true,
+      sellTokenBalance: SellTokenSource.ERC20,
+      buyTokenBalance: BuyTokenDestination.ERC20,
+      signingScheme: SigningScheme.PRESIGN,
+      signature: "0x",
+      from: config.gpv2Settlement,
+      receiver: config.receiver,
+    })
+  )
+);
+```
+
+**Key Parameters:**
+- `signingScheme: SigningScheme.PRESIGN` - Indicates orders will be presigned on-chain
+- `signature: "0x"` - Empty signature (presignature will be committed by the module)
+- `from: config.gpv2Settlement` - Settlement contract is the order owner
+- `feeAmount: "0"` - No additional fees (fees already collected)
+- `partiallyFillable: true` - Orders can be partially filled
+
+<Info>
+  Orders are posted to the order book **before** the on-chain `drip()` transaction. This allows solvers to see and prepare to execute the orders as soon as the presignatures are committed.
+</Info>
+
+### Transaction Execution
+
+Location: `~/workspace/source/ts/drip/drip.ts`
+
+```typescript
+const txBaseRequest: TransactionRequest = {
+  from: await signerWithProvider.getAddress(),
+  to: moduleContract.address,
+  maxFeePerGas: params.maxFeePerGas || feeData.maxFeePerGas,
+  maxPriorityFeePerGas: params.maxPriorityFeePerGas || feeData.maxPriorityFeePerGas || undefined,
+  data: moduleContract.interface.encodeFunctionData("drip", [
+    toApprove,
+    toDrip,
+  ]),
+  value: BigNumber.from(0),
+  nonce,
+};
+
+const gasLimit = await signerWithProvider.estimateGas(txBaseRequest);
+```
+
+The keeper bot:
+1. Constructs the transaction with EIP-1559 gas parameters
+2. Estimates gas limit
+3. Optionally prompts for confirmation (if `--confirm-drip` is set)
+4. Broadcasts the transaction
+5. Waits for confirmation
+
+## Configuration
+
+Location: `~/workspace/source/ts/config.ts`
+
+The keeper bot supports the following configuration:
+
+```typescript
+export interface IConfig {
+  chainId: SupportedChainId;          // Network chain ID
+  privateKey: string;                  // Keeper private key (from env)
+  maxOrders: number;                   // Max orders per batch (default: 250)
+  module: string;                      // COWFeeModule contract address
+  gpv2Settlement: string;              // Settlement contract address
+  vaultRelayer: string;                // Vault relayer address
+  rpcUrl: string;                      // JSON-RPC endpoint
+  network: string;                     // Network name (mainnet, gnosis, etc.)
+  wrappedNativeToken: string;          // WETH/WXDAI/etc. address
+  minOut: bigint;                      // Minimum output threshold
+  targetSafe: string;                  // Target Safe address
+  receiver: string;                    // Fee receiver address
+  buyAmountSlippageBps: number;        // Slippage tolerance (default: 100 = 1%)
+  keeper: string;                      // Keeper address
+  appData: string;                     // App data hash
+  tokenListStrategy: "explorer" | "chain"; // Token discovery strategy
+  lookbackRange: number;               // Blocks to scan (chain strategy)
+  confirmDrip: boolean;                // Prompt before sending tx
+}
+```
+
+### Supported Networks
+
+```typescript
+export const networkSpecificConfigs: Record<string, NetworkDetails> = {
+  mainnet: {
+    rpcUrl: "https://eth.llamarpc.com",
+    explorer: "https://explorer.cow.fi",
+    chainId: SupportedChainId.MAINNET,
+  },
+  gnosis: {
+    rpcUrl: "https://1rpc.io/gnosis",
+    explorer: "https://explorer.cow.fi/gc",
+    chainId: SupportedChainId.GNOSIS_CHAIN,
+  },
+  // ... other networks
+};
+```
+
+<Note>
+  The configuration is read from command-line arguments and environment variables. See the configuration documentation for details on setting up the keeper bot.
+</Note>
+
+## Security Model
+
+### Access Control Hierarchy
+
+```
+┌──────────────────┐
+│  Target Safe     │  ← Owns the module, can disable it
+│  (Multisig)      │
+└────────┬─────────┘
+         │ enables module
+         ▼
+┌──────────────────┐
+│  COWFeeModule    │  ← Executes transactions via Safe
+│  (Smart Contract)│
+└────────┬─────────┘
+         │ only accepts calls from
+         ▼
+┌──────────────────┐
+│  Keeper          │  ← Authorized to call drip(), approve(), revoke()
+│  (EOA)           │
+└──────────────────┘
+```
+
+### Trust Assumptions
+
+1. **Keeper Security**: The keeper private key must be secured. If compromised, an attacker could:
+   - Drain all tokens from the settlement contract (within the bounds of the module's logic)
+   - Front-run legitimate fee collection
+   - DoS the fee collection process
+
+2. **Module Configuration**: All module parameters are immutable. Incorrect deployment parameters require deploying a new module.
+
+3. **CoW Protocol Settlement**: The module assumes the settlement contract and vault relayer are not malicious.
+
+4. **Safe Module Permission**: The target Safe must trust the module to execute transactions on its behalf.
+
+<Warning>
+  **Critical:** Always verify the module's deployment parameters match the intended configuration before enabling it on the Safe. An incorrect `keeper`, `receiver`, or `minOut` value cannot be changed without deploying a new module.
+</Warning>
+
+## Gas Optimization
+
+The system includes several gas optimizations:
+
+1. **Batch Operations**: Up to 250 orders can be processed in a single transaction
+2. **Multicall for Reads**: Balance and allowance checks use multicall to minimize RPC calls
+3. **Immutable Variables**: All configuration stored as immutable to reduce storage reads
+4. **Unchecked Arithmetic**: Loop counters use unchecked blocks where overflow is impossible:
+   ```solidity
+   unchecked {
+       ++i;
+   }
+   ```
+5. **CoW Protocol's Gasless Orders**: Orders are posted off-chain; only presignatures are committed on-chain
+
+## Monitoring and Observability
+
+The keeper bot outputs detailed logs:
+
+```
+ETH to wrap: 1.234
+Tokens to swap: [
+  { symbol: 'USDC', balance: '1000.0', buyAmount: '0.5', needsApproval: false },
+  { symbol: 'DAI', balance: '500.0', buyAmount: '0.25', needsApproval: true },
+]
+Total tokens pre-filter: 45
+Total tokens after filtering by quotes api: 12
+Total tokens after filtering by minOut: 2
+Drip transaction parameters: {...}
+Fee collection for chain mainnet initiated (2 orders). 
+Expecting proceeds of 0.75 WETH!
+
+Follow the progress at https://explorer.cow.fi/address/0x9008D1...
+```
+
+**Key Metrics to Monitor:**
+- Number of tokens discovered
+- Number of tokens filtered out at each stage
+- Expected proceeds from each run
+- Transaction success/failure
+- Gas costs
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment Guide" icon="rocket" href="/getting-started/deployment">
+    Learn how to deploy the module and configure the keeper bot
+  </Card>
+  <Card title="Configuration Reference" icon="gear" href="/getting-started/configuration">
+    Detailed configuration options for the keeper bot
+  </Card>
+  <Card title="Operations Guide" icon="wrench" href="/operations/keeper">
+    Day-to-day operations, monitoring, and troubleshooting
+  </Card>
+  <Card title="Contract Reference" icon="book" href="/contracts/cowfeemodule">
+    Complete contract and function reference
+  </Card>
+</CardGroup>

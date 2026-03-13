@@ -1,0 +1,166 @@
+---
+title: CLI Options
+description: Complete reference for all command-line options and flags
+---
+
+The keeper bot accepts the following command-line options:
+
+## Network Configuration
+
+<ParamField path="--network" type="string">
+  The network to run the keeper bot on.
+  
+  **Choices**: `mainnet`, `gnosis`, `arbitrum`, `base`, `sepolia`
+  
+  **Example**:
+  ```bash
+  --network mainnet
+  ```
+</ParamField>
+
+<ParamField path="--rpc-url" type="string">
+  Custom RPC URL to use for blockchain interactions. If not provided, uses the default RPC URL for the selected network.
+  
+  **Example**:
+  ```bash
+  --rpc-url https://eth.llamarpc.com
+  ```
+</ParamField>
+
+## Module Configuration
+
+<ParamField path="--module" type="address" required>
+  The address of the deployed COWFeeModule contract. This is the only required parameter.
+  
+  The keeper bot reads configuration from this module contract, including:
+  - Target safe address
+  - Receiver address
+  - Wrapped native token
+  - Minimum output amount
+  - Keeper address
+  - App data
+  
+  **Example**:
+  ```bash
+  --module 0x1234567890abcdef1234567890abcdef12345678
+  ```
+</ParamField>
+
+## Order Configuration
+
+<ParamField path="--max-orders" type="number" default="250">
+  Maximum number of orders to place in a single drip call. This prevents transaction size from exceeding gas limits.
+  
+  **Example**:
+  ```bash
+  --max-orders 250
+  ```
+</ParamField>
+
+<ParamField path="--buy-amount-slippage-bps" type="number" default="100">
+  Slippage tolerance to add to the quoted buy amount, measured in basis points (bps). 100 bps = 1%.
+  
+  This tolerance accounts for price movements between quote time and execution time.
+  
+  **Example**:
+  ```bash
+  --buy-amount-slippage-bps 100  # 1% slippage tolerance
+  ```
+</ParamField>
+
+## Token Discovery
+
+<ParamField path="--token-list-strategy" type="string" default="explorer">
+  Strategy to use for discovering tokens held by the Settlement contract.
+  
+  **Choices**:
+  - `explorer` - Uses Ethplorer (Mainnet) or Blockscout (Gnosis) APIs
+  - `chain` - Uses on-chain Trade events from the Settlement contract
+  
+  See [Token List Strategies](/cli/token-list-strategies) for details on each approach.
+  
+  **Example**:
+  ```bash
+  --token-list-strategy chain
+  ```
+</ParamField>
+
+<ParamField path="--lookback-range" type="number" default="1000">
+  Number of blocks to look back when using the `chain` token discovery strategy. Only applies when `--token-list-strategy chain` is used.
+  
+  The keeper bot will query Settlement `Trade` events from the last N blocks to discover which tokens have been traded.
+  
+  **Example**:
+  ```bash
+  --lookback-range 1000
+  ```
+</ParamField>
+
+## Gas Configuration
+
+<ParamField path="--max-fee-per-gas" type="string">
+  Override the maximum fee per gas (EIP-1559) for transactions. Value specified in GWEI.
+  
+  If not provided, the keeper bot will fetch gas prices from the network or use network-specific gas price fetchers.
+  
+  **Example**:
+  ```bash
+  --max-fee-per-gas 50  # 50 GWEI
+  ```
+</ParamField>
+
+<ParamField path="--max-priority-fee-per-gas" type="string">
+  Override the maximum priority fee per gas (EIP-1559) for transactions. Value specified in GWEI.
+  
+  This is the tip paid to validators to prioritize your transaction.
+  
+  **Example**:
+  ```bash
+  --max-priority-fee-per-gas 2  # 2 GWEI
+  ```
+</ParamField>
+
+See [Gas Management](/cli/gas-management) for more details on gas price configuration.
+
+## Other Options
+
+<ParamField path="-c, --confirm-drip" type="boolean" default="false">
+  Ask for confirmation before executing the drip transaction. Useful for manual review before sending transactions.
+  
+  **Example**:
+  ```bash
+  --confirm-drip
+  ```
+</ParamField>
+
+<ParamField path="-h, --help" type="boolean">
+  Display help information and exit.
+  
+  **Example**:
+  ```bash
+  --help
+  ```
+</ParamField>
+
+## Complete Example
+
+Here's a complete example with all commonly used options:
+
+```bash
+source .env
+
+yarn ts-node index.ts \
+  --network mainnet \
+  --rpc-url $RPC_URL \
+  --module 0x1234567890abcdef1234567890abcdef12345678 \
+  --max-orders 250 \
+  --buy-amount-slippage-bps 100 \
+  --token-list-strategy chain \
+  --lookback-range 1000 \
+  --max-fee-per-gas 50 \
+  --max-priority-fee-per-gas 2
+```
+
+## Implementation Reference
+
+The CLI options are defined in `ts/utils/readConfig.ts:21-75` using the `commander` library.

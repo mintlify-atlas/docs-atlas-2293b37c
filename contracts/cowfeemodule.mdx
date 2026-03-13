@@ -1,0 +1,302 @@
+---
+title: COWFeeModule Contract
+description: Reference documentation for the COWFeeModule smart contract
+---
+
+## Overview
+
+The `COWFeeModule` is a Safe module that automates the process of collecting fees from a Safe contract and swapping them to a target token (typically the native wrapped token) using CoW Protocol's settlement contract. The module operates on behalf of a Safe, creating CoW Protocol orders and managing token approvals.
+
+## Contract Details
+
+**Source:** `src/COWFeeModule.sol`
+
+**License:** GPL-3.0-or-later
+
+**Solidity Version:** ^0.8
+
+## Constructor
+
+The COWFeeModule is initialized with immutable configuration parameters that define its behavior.
+
+```solidity
+constructor(
+    address _settlement,
+    address _targetSafe,
+    address _wrappedNativeToken,
+    address _keeper,
+    bytes32 _appData,
+    address _receiver,
+    uint256 _minOut
+)
+```
+
+<ParamField path="_settlement" type="address" required>
+  Address of the CoW Protocol GPv2Settlement contract
+</ParamField>
+
+<ParamField path="_targetSafe" type="address" required>
+  Address of the Safe contract this module will operate on
+</ParamField>
+
+<ParamField path="_wrappedNativeToken" type="address" required>
+  Address of the wrapped native token (e.g., WETH on Ethereum)
+</ParamField>
+
+<ParamField path="_keeper" type="address" required>
+  Address authorized to call the module's functions (only this address can trigger operations)
+</ParamField>
+
+<ParamField path="_appData" type="bytes32" required>
+  CoW Protocol appData identifier for orders created by this module
+</ParamField>
+
+<ParamField path="_receiver" type="address" required>
+  Address that will receive the swapped tokens
+</ParamField>
+
+<ParamField path="_minOut" type="uint256" required>
+  Minimum output amount required for transfers (in wei)
+</ParamField>
+
+## Immutable State Variables
+
+All configuration is stored as immutable variables for gas efficiency:
+
+```solidity
+ISafe public immutable targetSafe;
+address public immutable wrappedNativeToken;
+address public immutable keeper;
+bytes32 public immutable domainSeparator;
+bytes32 public immutable appData;
+IGPv2Settlement public immutable settlement;
+address public immutable vaultRelayer;
+address public immutable receiver;
+uint256 public immutable minOut;
+```
+
+## Structs
+
+### SwapToken
+
+Defines a token swap operation:
+
+```solidity
+struct SwapToken {
+    address token;      // Token to sell
+    uint256 sellAmount; // Amount to sell
+    uint256 buyAmount;  // Minimum amount to buy
+}
+```
+
+### Revocation
+
+Defines a token approval revocation:
+
+```solidity
+struct Revocation {
+    address token;   // Token contract address
+    address spender; // Spender to revoke approval from
+}
+```
+
+## Modifiers
+
+### onlyKeeper
+
+Restricts function access to the configured keeper address:
+
+```solidity
+modifier onlyKeeper() {
+    if (msg.sender != keeper) {
+        revert OnlyKeeper();
+    }
+    _;
+}
+```
+
+## Functions
+
+### drip
+
+The main function that creates CoW Protocol orders for swapping accumulated fees. It handles:
+- Token approvals
+- Order presignature creation
+- Native token wrapping
+- Wrapped token transfers
+
+```solidity
+function drip(
+    address[] calldata _approveTokens,
+    SwapToken[] calldata _swapTokens
+) external onlyKeeper
+```
+
+<ParamField path="_approveTokens" type="address[]">
+  Array of token addresses to approve for spending by the vault relayer
+</ParamField>
+
+<ParamField path="_swapTokens" type="SwapToken[]">
+  Array of tokens to swap with their amounts
+</ParamField>
+
+**Behavior:**
+
+1. Checks the settlement contract's native token balance and wraps it if >= `minOut`
+2. Checks the wrapped native token balance and transfers it to receiver if >= `minOut`
+3. Approves specified tokens for spending by the vault relayer
+4. Creates CoW Protocol presignatures for each swap token
+5. All operations are executed as a batch through the Safe module
+
+**Example Usage:**
+
+```javascript
+const approveTokens = [USDC_ADDRESS, DAI_ADDRESS];
+const swapTokens = [
+  {
+    token: USDC_ADDRESS,
+    sellAmount: ethers.parseUnits("1000", 6), // 1000 USDC
+    buyAmount: ethers.parseEther("0.5")        // Minimum 0.5 WETH
+  }
+];
+
+await cowFeeModule.drip(approveTokens, swapTokens);
+```
+
+### approve
+
+Approves tokens for spending by the CoW Protocol vault relayer:
+
+```solidity
+function approve(address[] calldata _tokens) external onlyKeeper
+```
+
+<ParamField path="_tokens" type="address[]">
+  Array of token addresses to approve
+</ParamField>
+
+**Behavior:**
+- Sets maximum allowance (`type(uint256).max`) for each token to the vault relayer
+- Executed through the Safe module via the settlement contract
+
+**Example Usage:**
+
+```javascript
+const tokens = [USDC_ADDRESS, DAI_ADDRESS, USDT_ADDRESS];
+await cowFeeModule.approve(tokens);
+```
+
+### revoke
+
+Revokes token approvals for specified spenders:
+
+```solidity
+function revoke(Revocation[] calldata _revocations) external onlyKeeper
+```
+
+<ParamField path="_revocations" type="Revocation[]">
+  Array of revocations specifying token and spender pairs
+</ParamField>
+
+**Behavior:**
+- Sets allowance to 0 for each token-spender pair
+- Useful for security or when changing approval strategies
+
+**Example Usage:**
+
+```javascript
+const revocations = [
+  { token: USDC_ADDRESS, spender: OLD_RELAYER_ADDRESS },
+  { token: DAI_ADDRESS, spender: OLD_RELAYER_ADDRESS }
+];
+await cowFeeModule.revoke(revocations);
+```
+
+### nextValidTo
+
+Calculates the `validTo` timestamp for the next order. This is deterministic so orders can be pushed to the CoW Protocol API before the on-chain transaction:
+
+```solidity
+function nextValidTo() public view returns (uint32)
+```
+
+<ResponseField name="validTo" type="uint32">
+  Timestamp (Unix epoch) when the next order will expire
+</ResponseField>
+
+**Behavior:**
+- Rounds down the current block timestamp to the nearest hour
+- Adds 2 hours to get the expiration time
+- Example: If current time is 14:30, validTo will be 16:00
+
+**Example Usage:**
+
+```javascript
+const validTo = await cowFeeModule.nextValidTo();
+console.log(`Next order valid until: ${new Date(validTo * 1000)}`);
+```
+
+## Errors
+
+### OnlyKeeper
+
+Thrown when a non-keeper address attempts to call a restricted function:
+
+```solidity
+error OnlyKeeper();
+```
+
+### BuyAmountTooSmall
+
+Thrown when a swap token's `buyAmount` is less than the configured `minOut`:
+
+```solidity
+error BuyAmountTooSmall();
+```
+
+## Internal Functions
+
+The contract includes several internal helper functions:
+
+- `_approveInteractions()` - Builds approval interaction data
+- `_execFromModule()` - Executes transactions through the Safe module interface
+- `_execInteractions()` - Executes a batch of interactions via the settlement contract
+- `_computePreSignature()` - Computes the presignature for a CoW Protocol order
+
+## Security Considerations
+
+1. **Keeper Trust**: The keeper has significant control over the module's operations. Ensure the keeper address is secure and trusted.
+
+2. **Immutable Configuration**: All configuration is set at deployment and cannot be changed. Verify all parameters before deployment.
+
+3. **Minimum Output**: The `minOut` parameter prevents dust amounts from being transferred, which could be exploited for griefing.
+
+4. **Safe Module**: This contract must be enabled as a module on the target Safe to function.
+
+## Integration Example
+
+```javascript
+// Deploy the module
+const COWFeeModule = await ethers.getContractFactory("COWFeeModule");
+const module = await COWFeeModule.deploy(
+  SETTLEMENT_ADDRESS,
+  SAFE_ADDRESS,
+  WETH_ADDRESS,
+  KEEPER_ADDRESS,
+  APP_DATA,
+  RECEIVER_ADDRESS,
+  ethers.parseEther("0.01") // 0.01 ETH minimum
+);
+
+// Enable the module on the Safe (requires Safe owner signature)
+await safe.enableModule(module.address);
+
+// Keeper can now trigger fee collection
+await module.drip(
+  [TOKEN1, TOKEN2],  // Approve these tokens
+  [                   // Swap these tokens
+    { token: TOKEN1, sellAmount: amount1, buyAmount: minBuy1 },
+    { token: TOKEN2, sellAmount: amount2, buyAmount: minBuy2 }
+  ]
+);
+```

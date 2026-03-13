@@ -1,0 +1,126 @@
+---
+title: 'Enabling the Module'
+description: 'Learn how to enable the CoW Fee Module on your Safe'
+---
+
+## Overview
+
+After deploying the CoW Fee Module, you need to enable it on your target Safe. This is a critical step that grants the module permission to execute transactions on behalf of the Safe.
+
+<Warning>
+  The target Safe must be a **whitelisted solver** in the CoW Protocol. Without solver privileges, the module will not function correctly.
+</Warning>
+
+## Why Enable the Module?
+
+The CoW Fee Module needs to be enabled on the Safe to:
+
+- Execute transactions through the Safe's `execTransactionFromModuleReturnData` function
+- Approve tokens to the CoW Protocol vault relayer
+- Create pre-signatures for swap orders
+- Transfer wrapped native tokens to the designated receiver
+
+Without enabling the module, these operations will fail due to lack of permissions.
+
+## Methods for Enabling
+
+There are two primary methods to enable the module on your Safe:
+
+### Method 1: Safe Transaction Builder UI
+
+The easiest way to enable the module is through the Safe Transaction Builder interface.
+
+<Steps>
+  <Step title="Access Transaction Builder">
+    Navigate to the [Safe Transaction Builder](https://app.safe.global/share/safe-app?appUrl=https%3A%2F%2Fapps-portal.safe.global%2Ftx-builder) and connect to your target Safe.
+  </Step>
+
+  <Step title="Load the Safe ABI">
+    Click on **"Use Implementation ABI"** to automatically load the Safe contract's ABI. This will populate the available functions you can call.
+  </Step>
+
+  <Step title="Select enableModule function">
+    From the dropdown menu of available functions, select **`enableModule`**.
+  </Step>
+
+  <Step title="Enter module address">
+    In the function parameters:
+    - Enter your deployed CoW Fee Module address in the `module` parameter field
+    - Click **"Add new transaction"** to add it to the batch
+  </Step>
+
+  <Step title="Send the transaction">
+    Click **"Send batch"** to create the Safe transaction. Collect the required signatures from Safe owners and execute the transaction.
+  </Step>
+</Steps>
+
+### Method 2: Using Cast for Calldata
+
+For advanced users or scripted deployments, you can generate the calldata using Foundry's `cast` tool and execute it through the Safe interface.
+
+<Steps>
+  <Step title="Generate calldata">
+    Use `cast` to generate the calldata for enabling the module:
+
+    ```bash
+    cast calldata "enableModule(address)" <module-address>
+    ```
+
+    Replace `<module-address>` with your deployed module's address.
+  </Step>
+
+  <Step title="Create Safe transaction">
+    Use the generated calldata to create a transaction from the Safe to itself:
+    - **To address**: The Safe's own address
+    - **Value**: 0
+    - **Data**: The calldata from step 1
+  </Step>
+
+  <Step title="Execute transaction">
+    Submit the transaction through your preferred Safe interface (web UI, CLI, or API), collect required signatures, and execute.
+  </Step>
+</Steps>
+
+## Automatic Enabling During Deployment
+
+For local development and testing with Anvil, you can automatically enable the module during deployment by setting the `SHOULD_ENABLE_MODULE` environment variable:
+
+```bash .env
+SHOULD_ENABLE_MODULE=true
+```
+
+<Note>
+  This automatic enabling only works in local Anvil environments where the deployment script has control over the Safe. It is not recommended for production deployments.
+</Note>
+
+The deployment script checks this flag and calls `enableModule` if set:
+
+```solidity script/DeployCOWFeeModule.s.sol
+// only useful for local anvil setup
+if (shouldEnableModule) {
+    vm.broadcast(receiver);
+    ISafe(receiver).enableModule(address(module));
+}
+```
+
+## Verification
+
+After enabling the module, you can verify it was successful by:
+
+1. Checking the Safe's enabled modules in the Safe web interface under **Settings > Modules**
+2. Calling `getModules()` on the Safe contract to list all enabled modules
+3. Calling `isModuleEnabled(address)` with your module address
+
+## Disabling the Module
+
+If you need to disable the module:
+
+1. Go to your Safe in the Safe web interface
+2. Navigate to **Settings > Modules**
+3. Find the CoW Fee Module in the list
+4. Click the disable/remove option
+5. Execute the transaction with the required signatures
+
+<Tip>
+  Keep track of which module addresses are enabled on your Safe, especially if you redeploy the module with updated parameters.
+</Tip>

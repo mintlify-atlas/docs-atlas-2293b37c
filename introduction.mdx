@@ -1,0 +1,200 @@
+---
+title: Introduction
+description: Overview of the CoW Fee Module - Automated fee collection from CoW Protocol
+---
+
+# CoW Fee Module
+
+The CoW Fee Module is an automated system for collecting trading fees from the CoW Protocol settlement contract. It combines a Gnosis Safe module with a keeper bot to periodically sweep accumulated tokens and convert them into a target asset.
+
+<Note>
+  The CoW Fee Module operates as a Safe module, enabling automated transactions from the target Safe without requiring manual approval for each fee collection.
+</Note>
+
+## What is CoW Fee Module?
+
+CoW Fee Module is a specialized Safe module designed to automatically collect and consolidate trading fees that accumulate in the [CoW Protocol Settlement contract](https://etherscan.io/address/0x9008D19f58AAbD9eD0D60971565AA8510560ab41). As trades execute on CoW Protocol, fees accumulate in various tokens within the settlement contract. This module automates the process of:
+
+1. **Discovering** tokens held by the settlement contract
+2. **Filtering** tokens based on liquidity and minimum output value
+3. **Swapping** accumulated tokens for a target asset (typically wrapped native token)
+4. **Transferring** the collected fees to a designated receiver address
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Automated Fee Collection" icon="robot">
+    Keeper bot runs continuously to detect and collect fees without manual intervention
+  </Card>
+  <Card title="Multi-Chain Support" icon="globe">
+    Supports Ethereum, Gnosis Chain, Arbitrum, Base, Sepolia, Avalanche, Polygon, BNB, Linea, Plasma, and Ink
+  </Card>
+  <Card title="Flexible Token Discovery" icon="search">
+    Two strategies: Explorer API (Ethplorer/Blockscout) or on-chain event scanning
+  </Card>
+  <Card title="Safe Module Integration" icon="shield">
+    Leverages Gnosis Safe's module system for secure, controlled automation
+  </Card>
+  <Card title="Native Token Wrapping" icon="arrow-right-arrow-left">
+    Automatically wraps accumulated native tokens (ETH → WETH) before transfer
+  </Card>
+  <Card title="Liquidity Filtering" icon="filter">
+    Uses CoW Protocol's order book to filter out illiquid tokens
+  </Card>
+</CardGroup>
+
+## How It Works
+
+The system consists of two main components working together:
+
+### 1. COWFeeModule Smart Contract
+
+A Solidity contract deployed on-chain that:
+- Is enabled as a module on the target Safe
+- Provides keeper-only functions to approve tokens, create presignatures, and execute swaps
+- Validates that buy amounts meet minimum thresholds (`minOut`)
+- Handles native token wrapping and transfers
+
+**Key Parameters** (set at deployment):
+- `settlement` - CoW Protocol Settlement contract address
+- `targetSafe` - The Safe that owns the module
+- `wrappedNativeToken` - Target asset (e.g., WETH)
+- `keeper` - Authorized address that can trigger fee collection
+- `receiver` - Address that receives collected fees
+- `minOut` - Minimum output value to process a token
+- `appData` - CoW Protocol app data identifier
+
+### 2. Keeper Bot
+
+A TypeScript application that:
+- Monitors the settlement contract for accumulated tokens
+- Obtains quotes from CoW Protocol's order book
+- Posts swap orders to the order book API
+- Calls the module's `drip` function to approve tokens and commit presignatures
+- Handles batch operations (configurable `maxOrders` per transaction)
+
+<Info>
+  The keeper bot can be run directly via Node.js or deployed as a Docker container for continuous operation.
+</Info>
+
+## Safe Module Architecture
+
+The COWFeeModule contract integrates with Gnosis Safe using the [module pattern](https://docs.safe.global/advanced/smart-account-modules):
+
+```solidity
+interface ISafe {
+    function execTransactionFromModuleReturnData(
+        address to,
+        uint256 value,
+        bytes memory data,
+        Operation operation
+    ) external returns (bool success, bytes memory returnData);
+}
+```
+
+This allows the module to execute transactions from the Safe without requiring signatures from Safe owners, enabling fully automated fee collection while maintaining security through:
+
+- **Keeper-only access**: Only the designated keeper address can call module functions
+- **Predefined behavior**: The module can only perform specific operations (approvals, presignatures, transfers)
+- **On-chain validation**: All swap parameters are validated against `minOut` thresholds
+
+<Warning>
+  The module must be explicitly enabled on the target Safe. A misconfigured or malicious module could execute unauthorized transactions. Always verify deployment parameters before enabling.
+</Warning>
+
+## Use Cases
+
+### Primary: CoW Protocol Fee Collection
+
+The module is designed for CoW Protocol (or CoW Protocol DAO) to automatically collect trading fees from the settlement contract. Fees accumulate as various tokens from partially fillable orders, protocol surplus, and other trading activity.
+
+### Treasury Management
+
+The collected fees are consolidated into a single asset (wrapped native token) and transferred to a treasury or multisig, simplifying accounting and asset management.
+
+### Gas Optimization
+
+By batching multiple token swaps in a single transaction and leveraging CoW Protocol's gasless orders, the system minimizes gas costs associated with fee collection.
+
+## Getting Started
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Learn about system components and workflows
+  </Card>
+  <Card title="Deployment Guide" icon="rocket" href="/getting-started/deployment">
+    Deploy the module and set up the keeper
+  </Card>
+  <Card title="Configuration" icon="gear" href="/getting-started/configuration">
+    Configure keeper bot settings and strategies
+  </Card>
+  <Card title="Operations" icon="wrench" href="/operations">
+    Manage module operations and monitoring
+  </Card>
+</CardGroup>
+
+## Supported Networks
+
+The CoW Fee Module supports all networks where CoW Protocol is deployed:
+
+- **Ethereum Mainnet** - Chain ID: 1
+- **Gnosis Chain** - Chain ID: 100
+- **Arbitrum One** - Chain ID: 42161
+- **Base** - Chain ID: 8453
+- **Sepolia Testnet** - Chain ID: 11155111
+- **Avalanche** - Chain ID: 43114
+- **Polygon** - Chain ID: 137
+- **BNB Chain** - Chain ID: 56
+- **Linea** - Chain ID: 59144
+- **Plasma** - Chain ID: (plasma network)
+- **Ink** - Chain ID: (ink network)
+
+<Info>
+  Each network requires its own module deployment with network-specific configuration (settlement contract address, wrapped native token, etc.).
+</Info>
+
+## Security Considerations
+
+<Warning>
+  **Critical Security Points:**
+  - The keeper private key has significant privileges. Store it securely and never commit it to version control.
+  - The module has unrestricted access to tokens held by the settlement contract. Verify all deployment parameters carefully.
+  - Always test on a testnet (e.g., Sepolia) before mainnet deployment.
+</Warning>
+
+### Access Control
+
+The module implements a simple but effective access control mechanism:
+
+```solidity
+modifier onlyKeeper() {
+    if (msg.sender != keeper) {
+        revert OnlyKeeper();
+    }
+    _;
+}
+```
+
+All critical functions (`approve`, `revoke`, `drip`) are restricted to the keeper address set during deployment.
+
+### Immutable Configuration
+
+All module parameters are set at deployment and cannot be changed:
+
+```solidity
+address public immutable keeper;
+address public immutable receiver;
+uint256 public immutable minOut;
+// ... other immutable parameters
+```
+
+To update parameters, a new module must be deployed and enabled on the Safe, and the old module should be disabled.
+
+## Next Steps
+
+Ready to dive deeper? Check out the following resources:
+
+1. **[Architecture](/architecture)** - Understand the technical architecture and component interactions
+2. **[Deployment](/getting-started/deployment)** - Step-by-step guide to deploy the module
+3. **[Configuration](/getting-started/configuration)** - Configure the keeper bot for your use case
+4. **[Contract Reference](/contracts/cowfeemodule)** - Detailed contract and function documentation

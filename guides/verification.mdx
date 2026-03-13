@@ -1,0 +1,244 @@
+---
+title: 'Contract Verification'
+description: 'Verify the CoW Fee Module contract on block explorers'
+---
+
+## Overview
+
+Verifying your deployed contract on block explorers like Etherscan, Basescan, or Arbiscan is essential for transparency and allows others to interact with your contract directly through the explorer interface.
+
+## Prerequisites
+
+Before verifying your contract, ensure you have:
+
+- The deployed contract address
+- Access to the source code and compilation environment
+- An API key for the block explorer (Etherscan, Basescan, etc.)
+- All constructor arguments used during deployment
+
+## Setting Up Your API Key
+
+You'll need an API key from the appropriate block explorer for your network.
+
+<Steps>
+  <Step title="Obtain API key">
+    Sign up and create an API key on the relevant block explorer:
+    - **Ethereum Mainnet/Sepolia**: [Etherscan](https://etherscan.io/apis)
+    - **Base**: [Basescan](https://basescan.org/apis)
+    - **Arbitrum**: [Arbiscan](https://arbiscan.io/apis)
+    - **Gnosis**: [Gnosisscan](https://gnosisscan.io/apis)
+  </Step>
+
+  <Step title="Add to environment">
+    Set the API key in your `.env` file:
+
+    ```bash .env
+    ETHERSCAN_API_KEY=your_api_key_here
+    ```
+  </Step>
+
+  <Step title="Load environment variables">
+    Source your environment file before running verification commands:
+
+    ```bash
+    source .env
+    ```
+  </Step>
+</Steps>
+
+## Verification During Deployment
+
+The easiest way to verify your contract is during the initial deployment using the `--verify` flag.
+
+```bash
+forge script ./script/DeployCOWFeeModule.s.sol \
+  --rpc-url <rpc> \
+  --broadcast \
+  --verify \
+  --private-key <private-key>
+```
+
+<Note>
+  Make sure `ETHERSCAN_API_KEY` is set in your environment before running this command.
+</Note>
+
+### Parameters
+
+- `--rpc-url`: The RPC endpoint for your target network
+- `--broadcast`: Actually send the deployment transaction
+- `--verify`: Automatically verify the contract after deployment
+- `--private-key`: Your deployer private key
+
+## Manual Verification
+
+If you've already deployed the contract and need to verify it separately, use the `forge verify-contract` command.
+
+### Command Structure
+
+```bash
+forge verify-contract <contract-address> COWFeeModule \
+  --chain-id <chain-id> \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,bytes32,address,uint256)" \
+    $SETTLEMENT \
+    $TARGET_SAFE \
+    $WRAPPED_NATIVE_TOKEN \
+    $KEEPER \
+    $APP_DATA \
+    $RECEIVER \
+    $MIN_OUT)
+```
+
+### Constructor Arguments
+
+The CoW Fee Module constructor requires seven parameters in this exact order:
+
+1. **`$SETTLEMENT`** - CoW Protocol settlement contract address
+2. **`$TARGET_SAFE`** - The Safe address (must be a whitelisted solver)
+3. **`$WRAPPED_NATIVE_TOKEN`** - The wrapped native token address (WETH, WMATIC, etc.)
+4. **`$KEEPER`** - The keeper address authorized to call module functions
+5. **`$APP_DATA`** - The bytes32 app data hash for CoW orders
+6. **`$RECEIVER`** - The address that receives the swapped fees
+7. **`$MIN_OUT`** - Minimum buy amount threshold in wei
+
+### Encoding Constructor Arguments
+
+The `cast abi-encode` command encodes the constructor parameters according to the ABI specification:
+
+```bash
+$(cast abi-encode "constructor(address,address,address,address,bytes32,address,uint256)" \
+  $SETTLEMENT \
+  $TARGET_SAFE \
+  $WRAPPED_NATIVE_TOKEN \
+  $KEEPER \
+  $APP_DATA \
+  $RECEIVER \
+  $MIN_OUT)
+```
+
+<Warning>
+  The order of constructor arguments must match exactly as defined in the contract. Incorrect ordering will result in verification failure.
+</Warning>
+
+## Network-Specific Examples
+
+### Ethereum Mainnet
+
+```bash
+source .env
+
+forge verify-contract 0xYourContractAddress COWFeeModule \
+  --chain-id 1 \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,bytes32,address,uint256)" \
+    0x9008D19f58AAbD9eD0D60971565AA8510560ab41 \
+    $TARGET_SAFE \
+    0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 \
+    $KEEPER \
+    $APP_DATA \
+    $RECEIVER \
+    $MIN_OUT)
+```
+
+### Base
+
+```bash
+source .env
+
+forge verify-contract 0xYourContractAddress COWFeeModule \
+  --chain-id 8453 \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,bytes32,address,uint256)" \
+    $SETTLEMENT \
+    $TARGET_SAFE \
+    0x4200000000000000000000000000000000000006 \
+    $KEEPER \
+    $APP_DATA \
+    $RECEIVER \
+    $MIN_OUT)
+```
+
+### Gnosis Chain
+
+```bash
+source .env
+
+forge verify-contract 0xYourContractAddress COWFeeModule \
+  --chain-id 100 \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,bytes32,address,uint256)" \
+    $SETTLEMENT \
+    $TARGET_SAFE \
+    $WRAPPED_NATIVE_TOKEN \
+    $KEEPER \
+    $APP_DATA \
+    $RECEIVER \
+    $MIN_OUT)
+```
+
+### Sepolia Testnet
+
+```bash
+source .env
+
+forge verify-contract 0xYourContractAddress COWFeeModule \
+  --chain-id 11155111 \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,bytes32,address,uint256)" \
+    $SETTLEMENT \
+    $TARGET_SAFE \
+    0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14 \
+    $KEEPER \
+    $APP_DATA \
+    $RECEIVER \
+    $MIN_OUT)
+```
+
+## Common Chain IDs
+
+| Network | Chain ID |
+|---------|----------|
+| Ethereum Mainnet | 1 |
+| Sepolia | 11155111 |
+| Gnosis Chain | 100 |
+| Arbitrum One | 42161 |
+| Base | 8453 |
+
+## Troubleshooting
+
+### Verification Failed
+
+If verification fails, check:
+
+1. **Compiler version**: Ensure you're using the same Solidity version as during deployment
+2. **Optimization settings**: Match the optimizer runs setting from your `foundry.toml`
+3. **Constructor arguments**: Verify all arguments are correct and in the right order
+4. **API key**: Ensure your `ETHERSCAN_API_KEY` is valid and has not exceeded rate limits
+
+### Rate Limiting
+
+If you encounter rate limiting errors:
+
+- Wait a few minutes before retrying
+- Consider upgrading your block explorer API key tier
+- Use the `--delay` flag to add delays between verification attempts
+
+### Already Verified
+
+If the contract is already verified, you'll receive a message indicating this. You can view the verified contract on the block explorer.
+
+## Verifying After Parameter Updates
+
+If you redeploy the module with updated parameters, you'll need to verify the new deployment:
+
+1. Deploy the new module with updated constructor parameters
+2. Run the verification command with the new contract address
+3. Use the `compare-deployments.ts` script to compare parameters:
+
+```bash
+yarn ts-node compare-deployments.ts --network <network-name> <new-module-address>
+```
+
+<Tip>
+  Keep a record of your deployment addresses and verification links for future reference.
+</Tip>

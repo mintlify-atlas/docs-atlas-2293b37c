@@ -1,0 +1,211 @@
+---
+title: Deployment
+description: Deploy the CoW Fee Module contract to your network
+---
+
+## Overview
+
+The CoW Fee Module is deployed using Foundry's scripting system. The deployment script is located at `script/DeployCOWFeeModule.s.sol` and reads configuration from environment variables.
+
+## Prerequisites
+
+Before deploying, ensure you have:
+
+- Completed the [installation setup](/getting-started/installation)
+- Configured all [required environment variables](/getting-started/configuration)
+- A funded deployer account with native tokens for gas
+- (Optional) An Etherscan API key for contract verification
+
+## Deployment Steps
+
+<Steps>
+  <Step title="Configure environment variables">
+    Ensure your `.env` file contains all required deployment parameters:
+    
+    ```bash
+    # Settlement contract address
+    SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+    
+    # Your Safe address (must be a whitelisted solver)
+    TARGET_SAFE=0x...
+    
+    # Wrapped native token (WETH, WMATIC, etc.)
+    WRAPPED_NATIVE_TOKEN=0x...
+    
+    # Keeper address (executes drip operations)
+    KEEPER=0x...
+    
+    # CoW order metadata hash
+    APP_DATA=0xbcca8463f460f14bca0185afeeb75923ee4434612f41063d0171b1e743ffe84b
+    
+    # Fee receiver address
+    RECEIVER=0x...
+    
+    # Minimum output amount in wrapped native token atoms
+    MIN_OUT=1000000000000000
+    ```
+    
+    See the [Configuration](/getting-started/configuration) page for detailed explanations.
+  </Step>
+  
+  <Step title="Dry run the deployment">
+    Test the deployment without broadcasting transactions:
+    
+    ```bash
+    forge script ./script/DeployCOWFeeModule.s.sol --rpc-url $RPC_URL
+    ```
+    
+    <Note>
+      The dry run simulates the deployment and shows you the contract address without spending gas.
+    </Note>
+  </Step>
+  
+  <Step title="Deploy the contract">
+    Deploy with your private key:
+    
+    <CodeGroup>
+    ```bash with verification
+    forge script ./script/DeployCOWFeeModule.s.sol \
+      --rpc-url $RPC_URL \
+      --broadcast \
+      --verify \
+      --private-key $PRIVATE_KEY
+    ```
+    
+    ```bash without verification
+    forge script ./script/DeployCOWFeeModule.s.sol \
+      --rpc-url $RPC_URL \
+      --broadcast \
+      --private-key $PRIVATE_KEY
+    ```
+    </CodeGroup>
+    
+    <Warning>
+      Never commit your private key to version control. Always use environment variables.
+    </Warning>
+  </Step>
+  
+  <Step title="Save the deployment address">
+    The script will output the deployed module address. Save this for later use:
+    
+    ```
+    Contract deployed at: 0x...
+    ```
+    
+    You can also find deployed addresses in `networks.json`.
+  </Step>
+</Steps>
+
+## Constructor Parameters
+
+The deployment script (`script/DeployCOWFeeModule.s.sol`) initializes the module with these parameters:
+
+```solidity
+new COWFeeModule(
+    settlement,          // CoW Protocol Settlement contract
+    targetSafe,         // Safe address (must be whitelisted solver)
+    wrappedNativeToken, // WETH/WMATIC/etc. address
+    keeper,             // Authorized keeper address
+    appData,            // CoW order metadata hash
+    receiver,           // Fee recipient address
+    minOut              // Minimum output threshold
+)
+```
+
+## Verify Contract on Block Explorer
+
+If you didn't use `--verify` during deployment, you can verify the contract later:
+
+```bash
+source .env
+
+forge verify-contract <fee-module-address> COWFeeModule \
+  --chain-id <chain-id> \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,bytes32,address,uint256)" \
+    $SETTLEMENT \
+    $TARGET_SAFE \
+    $WRAPPED_NATIVE_TOKEN \
+    $KEEPER \
+    $APP_DATA \
+    $RECEIVER \
+    $MIN_OUT)
+```
+
+<Note>
+  Set `ETHERSCAN_API_KEY` in your `.env` file. For non-Ethereum networks, use the appropriate block explorer API key (e.g., Gnosisscan, Arbiscan, Basescan).
+</Note>
+
+## Validate Deployment Parameters
+
+If you're redeploying to update parameters, compare with the current deployment:
+
+```bash
+yarn ts-node compare-deployments.ts --network <network-name> <new-module-address>
+```
+
+This helps verify that the new deployment has the correct configuration.
+
+## Deployed Addresses
+
+The following networks have existing deployments (from `networks.json`):
+
+| Network | Chain ID | Module Address |
+|---------|----------|----------------|
+| Mainnet | 1 | `0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2` |
+| Gnosis | 100 | `0x264843e85f8449ee3e9436253f3b8c0282dd4795` |
+| Polygon | 137 | `0xaf717efcfec02a65101e3ffb3c07234b8705cafc` |
+| Arbitrum | 42161 | `0xaf717efcfec02a65101e3ffb3c07234b8705cafc` |
+| Base | 8453 | `0xb7ec643b48fe7730ef701d10362a9f8a670ac018` |
+| Avalanche | 43114 | `0xaf717efcfec02a65101e3ffb3c07234b8705cafc` |
+| BNB Chain | 56 | `0xab8bc499b69c56a0c14778ee162bfe245eb26ed9` |
+| Linea | 59144 | `0x94333F7b2dFc3bf7EBD4DBd161f6C8BC0C7d6510` |
+| Plasma | 9745 | `0xEF0F60b1E985A748588d57e414aa3E9529b80714` |
+| Ink | 57073 | `0x406e71d2fc4871e1f18c076149ce0973dfe3e8f8` |
+| Sepolia | 11155111 | `0x456ca0e6abf780140583ef3c8b5be2e7804278a6` |
+
+## Enable Module on Safe
+
+After deployment, the module must be enabled on the target Safe:
+
+<Steps>
+  <Step title="Navigate to Safe Transaction Builder">
+    Open the [Transaction Builder](https://app.safe.global/share/safe-app?appUrl=https%3A%2F%2Fapps-portal.safe.global%2Ftx-builder) and select your target Safe.
+  </Step>
+  
+  <Step title="Load Safe ABI">
+    Click "Use Implementation ABI" to load the Safe contract interface automatically.
+  </Step>
+  
+  <Step title="Call enableModule">
+    1. Select `enableModule` from the function dropdown
+    2. Enter your deployed module address
+    3. Click "Add new transaction"
+  </Step>
+  
+  <Step title="Execute transaction">
+    Click "Send batch" and confirm the transaction with the required Safe signers.
+  </Step>
+</Steps>
+
+<Warning>
+  The Safe must be a **whitelisted CoW Protocol solver** to use this module. Contact the CoW Protocol team if you need solver access.
+</Warning>
+
+## Alternative: Enable Module with Cast
+
+You can also generate the calldata using Cast:
+
+```bash
+cast calldata "enableModule(address)" <module-address>
+```
+
+Use this calldata to create a Safe transaction that calls itself to enable the module.
+
+## Next Steps
+
+After deployment and enabling:
+
+1. Configure the keeper to run automated fee sweeps
+2. Test the module with `drip`, `approve`, or `revoke` operations
+3. Monitor module activity on the CoW Protocol explorer

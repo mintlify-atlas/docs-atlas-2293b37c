@@ -1,0 +1,238 @@
+---
+title: Gas Management
+description: How the keeper bot manages gas prices for transactions
+---
+
+The keeper bot uses sophisticated gas price management to ensure transactions are mined promptly while minimizing costs.
+
+## Gas Price Configuration
+
+You can configure gas prices using CLI options:
+
+```bash
+--max-fee-per-gas 50              # Maximum fee in GWEI (EIP-1559)
+--max-priority-fee-per-gas 2      # Priority fee in GWEI (EIP-1559)
+```
+
+If these options are not provided, the keeper bot automatically determines gas prices using a hierarchy of strategies.
+
+## Gas Price Hierarchy
+
+The keeper bot determines gas prices in the following order:
+
+### 1. CLI-Provided Prices
+
+If you specify `--max-fee-per-gas` and `--max-priority-fee-per-gas`, these values are used directly:
+
+```typescript
+if (txRequest?.maxFeePerGas && txRequest?.maxPriorityFeePerGas) {
+  return {
+    maxFeePerGas: BigNumber.from(txRequest.maxFeePerGas),
+    maxPriorityFeePerGas: BigNumber.from(txRequest.maxPriorityFeePerGas),
+  };
+}
+```
+
+See `ts/utils/executeTransaction.ts:189-195`.
+
+### 2. Network-Specific Gas Fetchers
+
+For certain networks, the keeper bot uses custom gas price fetchers that query network-specific gas station APIs.
+
+Currently, only **Polygon** has a custom gas fetcher:
+
+```typescript
+const GAS_PRICE_FETCHERS: Partial<
+  Record<SupportedChainId, CustomGasPriceFetcher>
+> = {
+  [SupportedChainId.POLYGON]: createGasPriceFetcher(
+    "standard",
+    "https://gasstation.polygon.technology/v2"
+  ),
+};
+```
+
+See `ts/utils/gasPriceFetchers.ts:12-20`.
+
+### 3. Provider Default (Fallback)
+
+If no custom fetcher is available, the keeper bot uses the RPC provider's `getFeeData()` method:
+
+```typescript
+const feeData = await provider.getFeeData();
+if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+  return {
+    maxFeePerGas: feeData.maxFeePerGas,
+    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+  };
+}
+```
+
+See `ts/utils/executeTransaction.ts:226-234`.
+
+## EIP-1559 vs Legacy Gas Pricing
+
+The keeper bot supports both EIP-1559 and legacy gas pricing:
+
+### EIP-1559 (Recommended)
+
+EIP-1559 transactions use two gas parameters:
+
+- **maxFeePerGas**: Maximum total fee you're willing to pay per gas
+- **maxPriorityFeePerGas**: Tip paid to validators for transaction priority
+
+EIP-1559 is used when the transaction has `maxFeePerGas` and `maxPriorityFeePerGas` set.
+
+### Legacy Gas Pricing
+
+Legacy transactions use a single `gasPrice` parameter. This is used for networks that don't support EIP-1559.
+
+## Custom Gas Fetchers
+
+### Polygon Gas Station
+
+For Polygon, the keeper bot queries the Polygon Gas Station API:
+
+```typescript
+export function createGasPriceFetcher(
+  speed: "safeLow" | "standard" | "fast",
+  apiUrl: string
+): CustomGasPriceFetcher {
+  return async () => {
+    const response = await fetch(apiUrl);
+    const data: GasStationResponse = await response.json();
+    const gasPrices = data[speed];
+    
+    // Convert from gwei to wei
+    const maxFeePerGas = BigNumber.from(Math.ceil(gasPrices.maxFee * 1e9));
+    const maxPriorityFeePerGas = BigNumber.from(
+      Math.ceil(gasPrices.maxPriorityFee * 1e9)
+    );
+    
+    return { maxFeePerGas, maxPriorityFeePerGas };
+  };
+}
+```
+
+See `ts/utils/gasPriceFetchers.ts:49-81`.
+
+The Polygon fetcher uses the `"standard"` speed tier by default.
+
+### Adding Custom Fetchers
+
+To add a custom gas fetcher for another network, modify the `GAS_PRICE_FETCHERS` mapping in `ts/utils/gasPriceFetchers.ts`:
+
+```typescript
+const GAS_PRICE_FETCHERS: Partial<
+  Record<SupportedChainId, CustomGasPriceFetcher>
+> = {
+  [SupportedChainId.POLYGON]: createGasPriceFetcher(
+    "standard",
+    "https://gasstation.polygon.technology/v2"
+  ),
+  // Add your custom fetcher here
+  [SupportedChainId.YOUR_NETWORK]: async () => {
+    // Fetch gas prices from your source
+    return {
+      maxFeePerGas: BigNumber.from(...),
+      maxPriorityFeePerGas: BigNumber.from(...),
+    };
+  },
+};
+```
+
+## Automatic Gas Price Increases
+
+If a transaction doesn't get mined within a timeout period, the keeper bot automatically increases the gas price and resubmits:
+
+### Configuration
+
+```typescript
+const GAS_INCREASE_STEP = 10;       // +10% increase per retry
+const MAX_GAS_INCREASE = 100;       // +100% of original (max 2x)
+const TIMEOUT_BEFORE_INCREASING_GAS_PRICE_MILLIS = 5 * 60 * 1000; // 5 min
+const WAIT_TIME_FOR_MAX_GAS_PRICE_MILLIS = 3600 * 1000; // 1 hour
+```
+
+See `ts/utils/executeTransaction.ts:10-13`.
+
+### How It Works
+
+1. **Submit transaction** with initial gas price
+2. **Wait** for 5 minutes
+3. If not mined, **increase gas price by 10%** and resubmit
+4. Repeat until gas price reaches **200% of original**
+5. At max gas price, **wait 1 hour** before giving up
+
+This is implemented in `ts/utils/executeTransaction.ts:76-174`.
+
+### Gas Price Increase Logic
+
+For EIP-1559 transactions:
+
+```typescript
+const maxFeePerGas = increaseByPercentage(
+  currentGasPrice.maxFeePerGas,
+  GAS_INCREASE_STEP  // +10%
+);
+
+updatedGasPrice = {
+  maxFeePerGas: maxFeePerGas.gt(maxGasPrice) ? maxGasPrice : maxFeePerGas,
+  maxPriorityFeePerGas: increaseByPercentage(
+    currentGasPrice.maxPriorityFeePerGas,
+    GAS_INCREASE_STEP
+  ),
+};
+```
+
+See `ts/utils/executeTransaction.ts:264-278`.
+
+## Transaction Replacement Handling
+
+The keeper bot handles transaction replacement scenarios:
+
+- **Replacement detected**: If a transaction is replaced (e.g., by a manual intervention), the keeper bot detects this and waits for the replacement transaction
+- **Nonce already used**: If the nonce was already used by another transaction, the keeper bot exits gracefully
+
+See `ts/utils/executeTransaction.ts:122-137`.
+
+## Best Practices
+
+### For Production
+
+- **Let the bot manage gas**: Don't specify manual gas prices unless you have a specific reason
+- **Monitor costs**: Check transaction costs periodically to ensure gas prices are reasonable
+- **Use custom fetchers**: If running on Polygon, the custom gas fetcher provides better prices
+
+### For Testing
+
+- **Use higher gas prices**: Speed up testing by setting higher gas prices:
+  ```bash
+  --max-fee-per-gas 100 --max-priority-fee-per-gas 5
+  ```
+- **Monitor timeouts**: Adjust timeout settings if your network has long block times
+
+### For Emergencies
+
+- **Manual override**: Use CLI flags to set specific gas prices if automatic pricing fails:
+  ```bash
+  --max-fee-per-gas 200 --max-priority-fee-per-gas 10
+  ```
+
+## Logging
+
+The keeper bot logs gas price information:
+
+```
+Get gas price estimation (from custom fetcher): { maxFeePerGas: ..., maxPriorityFeePerGas: ... }
+Waiting for drip transaction: 0x1234...
+drip transaction was mined: 0x1234...
+```
+
+For gas station APIs:
+
+```
+Gas price (standard): maxFee=30 gwei, maxPriorityFee=2.5
+```
+
+See `ts/utils/gasPriceFetchers.ts:75-77` and `ts/utils/executeTransaction.ts:219-221`.

@@ -1,0 +1,435 @@
+---
+title: Contract Interfaces
+description: Interface definitions used by the COWFeeModule
+---
+
+## Overview
+
+The COWFeeModule interacts with several external contracts through well-defined interfaces. This page documents all interfaces used by the module.
+
+## ISafe
+
+Interface for interacting with Safe (formerly Gnosis Safe) contracts. The COWFeeModule uses this to execute transactions on behalf of the Safe.
+
+**Source:** `src/interfaces/ISafe.sol`
+
+```solidity
+interface ISafe {
+    enum Operation {
+        Call,
+        DelegateCall
+    }
+
+    function execTransactionFromModuleReturnData(
+        address to,
+        uint256 value,
+        bytes memory data,
+        Operation operation
+    ) external returns (bool success, bytes memory returnData);
+
+    function enableModule(address module) external;
+}
+```
+
+### Operation Enum
+
+<ParamField path="Call" type="enum value">
+  Standard contract call (CALL opcode)
+</ParamField>
+
+<ParamField path="DelegateCall" type="enum value">
+  Delegate call (DELEGATECALL opcode) - executes code in the context of the Safe
+</ParamField>
+
+### execTransactionFromModuleReturnData
+
+Executes a transaction from an enabled module and returns the result data:
+
+```solidity
+function execTransactionFromModuleReturnData(
+    address to,
+    uint256 value,
+    bytes memory data,
+    Operation operation
+) external returns (bool success, bytes memory returnData)
+```
+
+<ParamField path="to" type="address">
+  Destination address for the transaction
+</ParamField>
+
+<ParamField path="value" type="uint256">
+  Amount of native token (ETH) to send with the transaction
+</ParamField>
+
+<ParamField path="data" type="bytes">
+  Encoded function call data
+</ParamField>
+
+<ParamField path="operation" type="Operation">
+  Type of operation (Call or DelegateCall)
+</ParamField>
+
+<ResponseField name="success" type="bool">
+  Whether the transaction succeeded
+</ResponseField>
+
+<ResponseField name="returnData" type="bytes">
+  Data returned by the transaction
+</ResponseField>
+
+**Usage in COWFeeModule:**
+
+The module uses this function to execute settlement interactions on behalf of the Safe:
+
+```solidity
+(bool success, bytes memory returnData) = 
+    targetSafe.execTransactionFromModuleReturnData(
+        _to,
+        0,
+        _cd,
+        ISafe.Operation.Call
+    );
+```
+
+### enableModule
+
+Enables a module for the Safe, allowing it to execute transactions:
+
+```solidity
+function enableModule(address module) external
+```
+
+<ParamField path="module" type="address">
+  Address of the module to enable
+</ParamField>
+
+**Note:** This must be called by a Safe owner before the COWFeeModule can function.
+
+## IGPv2Settlement
+
+Interface for the CoW Protocol (Gnosis Protocol v2) settlement contract. This is the core contract that handles order settlement.
+
+**Source:** `src/interfaces/IGPv2Settlement.sol`
+
+```solidity
+interface IGPv2Settlement {
+    struct OrderData {
+        address sellToken;
+        address buyToken;
+        address receiver;
+        uint256 sellAmount;
+        uint256 buyAmount;
+        uint32 validTo;
+        bytes32 appData;
+        uint256 feeAmount;
+        bytes32 kind;
+        bool partiallyFillable;
+        bytes32 sellTokenBalance;
+        bytes32 buyTokenBalance;
+    }
+
+    struct TradeData {
+        uint256 sellTokenIndex;
+        uint256 buyTokenIndex;
+        address receiver;
+        uint256 sellAmount;
+        uint256 buyAmount;
+        uint32 validTo;
+        bytes32 appData;
+        uint256 feeAmount;
+        uint256 flags;
+        uint256 executedAmount;
+        bytes signature;
+    }
+
+    struct InteractionData {
+        address to;
+        uint256 value;
+        bytes callData;
+    }
+
+    function settle(
+        address[] memory tokens,
+        uint256[] memory clearingPrices,
+        TradeData[] memory trades,
+        InteractionData[][3] memory interactions
+    ) external;
+
+    function setPreSignature(bytes calldata orderUid, bool signed) external;
+
+    function domainSeparator() external view returns (bytes32);
+
+    function vaultRelayer() external view returns (address);
+}
+```
+
+### InteractionData Struct
+
+Defines an arbitrary contract interaction to execute during settlement:
+
+```solidity
+struct InteractionData {
+    address to;       // Target contract address
+    uint256 value;    // ETH value to send
+    bytes callData;   // Encoded function call
+}
+```
+
+**Usage in COWFeeModule:**
+
+The module uses `InteractionData` to batch approvals, presignatures, and transfers:
+
+```solidity
+IGPv2Settlement.InteractionData memory interaction = 
+    IGPv2Settlement.InteractionData({
+        to: token,
+        value: 0,
+        callData: abi.encodeCall(IERC20.approve, (vaultRelayer, type(uint256).max))
+    });
+```
+
+### TradeData Struct
+
+Represents a trade to execute during settlement (used by solvers):
+
+<ParamField path="sellTokenIndex" type="uint256">
+  Index of the sell token in the tokens array
+</ParamField>
+
+<ParamField path="buyTokenIndex" type="uint256">
+  Index of the buy token in the tokens array
+</ParamField>
+
+<ParamField path="receiver" type="address">
+  Address receiving the bought tokens
+</ParamField>
+
+<ParamField path="sellAmount" type="uint256">
+  Amount of tokens to sell
+</ParamField>
+
+<ParamField path="buyAmount" type="uint256">
+  Amount of tokens to buy
+</ParamField>
+
+<ParamField path="validTo" type="uint32">
+  Order expiration timestamp
+</ParamField>
+
+<ParamField path="appData" type="bytes32">
+  Application-specific data
+</ParamField>
+
+<ParamField path="feeAmount" type="uint256">
+  Fee amount in sell token
+</ParamField>
+
+<ParamField path="flags" type="uint256">
+  Bit flags for order properties
+</ParamField>
+
+<ParamField path="executedAmount" type="uint256">
+  Amount already executed (for partially fillable orders)
+</ParamField>
+
+<ParamField path="signature" type="bytes">
+  Order signature
+</ParamField>
+
+### settle
+
+Executes a settlement batch with trades and interactions:
+
+```solidity
+function settle(
+    address[] memory tokens,
+    uint256[] memory clearingPrices,
+    TradeData[] memory trades,
+    InteractionData[][3] memory interactions
+) external
+```
+
+<ParamField path="tokens" type="address[]">
+  Array of token addresses involved in the settlement
+</ParamField>
+
+<ParamField path="clearingPrices" type="uint256[]">
+  Clearing prices for each token
+</ParamField>
+
+<ParamField path="trades" type="TradeData[]">
+  Array of trades to execute
+</ParamField>
+
+<ParamField path="interactions" type="InteractionData[][3]">
+  Three arrays of interactions: [pre-settlement, intra-settlement, post-settlement]
+</ParamField>
+
+**Usage in COWFeeModule:**
+
+The module calls settle with only interactions (no trades), using it as a batch transaction executor:
+
+```solidity
+IGPv2Settlement.InteractionData[][3] memory interactions = [
+    new IGPv2Settlement.InteractionData[](0),  // pre
+    _interactions,                              // intra (our interactions)
+    new IGPv2Settlement.InteractionData[](0)   // post
+];
+
+settlement.settle(
+    new address[](0),    // no tokens
+    new uint256[](0),    // no prices
+    new TradeData[](0),  // no trades
+    interactions
+);
+```
+
+### setPreSignature
+
+Registers or revokes a presignature for an order:
+
+```solidity
+function setPreSignature(bytes calldata orderUid, bool signed) external
+```
+
+<ParamField path="orderUid" type="bytes">
+  Unique order identifier (56 bytes: orderDigest + owner + validTo)
+</ParamField>
+
+<ParamField path="signed" type="bool">
+  true to register the signature, false to revoke it
+</ParamField>
+
+### domainSeparator
+
+Returns the EIP-712 domain separator for the settlement contract:
+
+```solidity
+function domainSeparator() external view returns (bytes32)
+```
+
+<ResponseField name="domainSeparator" type="bytes32">
+  EIP-712 domain separator used for signing orders
+</ResponseField>
+
+### vaultRelayer
+
+Returns the address of the vault relayer contract that pulls tokens:
+
+```solidity
+function vaultRelayer() external view returns (address)
+```
+
+<ResponseField name="vaultRelayer" type="address">
+  Address authorized to pull tokens from users who have approved it
+</ResponseField>
+
+## IERC20
+
+Minimal ERC20 interface with only the functions needed by the module.
+
+**Source:** `src/interfaces/IERC20.sol`
+
+```solidity
+interface IERC20 {
+    function approve(address, uint256) external;
+    function balanceOf(address) external view returns (uint256);
+    function transfer(address, uint256) external;
+}
+```
+
+### approve
+
+Approves a spender to transfer tokens:
+
+```solidity
+function approve(address spender, uint256 amount) external
+```
+
+<ParamField path="spender" type="address">
+  Address authorized to spend tokens
+</ParamField>
+
+<ParamField path="amount" type="uint256">
+  Amount of tokens to approve
+</ParamField>
+
+### balanceOf
+
+Returns the token balance of an account:
+
+```solidity
+function balanceOf(address account) external view returns (uint256)
+```
+
+<ParamField path="account" type="address">
+  Address to check balance for
+</ParamField>
+
+<ResponseField name="balance" type="uint256">
+  Token balance in wei
+</ResponseField>
+
+### transfer
+
+Transfers tokens to another address:
+
+```solidity
+function transfer(address to, uint256 amount) external
+```
+
+<ParamField path="to" type="address">
+  Recipient address
+</ParamField>
+
+<ParamField path="amount" type="uint256">
+  Amount of tokens to transfer
+</ParamField>
+
+## IWrappedNativeToken
+
+Interface for wrapped native tokens (WETH, WMATIC, etc.) that extends IERC20.
+
+**Source:** `src/interfaces/IWrappedNativeToken.sol`
+
+```solidity
+interface IWrappedNativeToken is IERC20 {
+    function deposit() external payable;
+}
+```
+
+### deposit
+
+Wraps native tokens (ETH) into wrapped tokens (WETH):
+
+```solidity
+function deposit() external payable
+```
+
+**Usage in COWFeeModule:**
+
+The module wraps any native token balance held by the settlement contract:
+
+```solidity
+approveAndDripInteractions[len - 2] = IGPv2Settlement.InteractionData({
+    to: wrappedNativeToken,
+    value: nativeBalance,
+    callData: abi.encodeCall(IWrappedNativeToken.deposit, ())
+});
+```
+
+The native token value is sent via the `value` field of the interaction, and calling `deposit()` wraps it into WETH.
+
+## Interface Usage Summary
+
+| Interface | Purpose | Key Functions Used |
+|-----------|---------|--------------------|
+| ISafe | Execute transactions from module | execTransactionFromModuleReturnData |
+| IGPv2Settlement | Interact with CoW Protocol | settle, setPreSignature, domainSeparator, vaultRelayer |
+| IERC20 | Token operations | approve, balanceOf, transfer |
+| IWrappedNativeToken | Wrap native tokens | deposit |
+
+## Related Libraries
+
+The module also uses the `GPv2Order` library for order hashing and encoding. See the main contract documentation for details on order structure.

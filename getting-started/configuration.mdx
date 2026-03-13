@@ -1,0 +1,261 @@
+---
+title: Configuration
+description: Configure environment variables and network settings for the CoW Fee Module
+---
+
+## Environment Variables
+
+The CoW Fee Module uses environment variables for configuration. Create a `.env` file in the project root based on `.env.example`.
+
+## RPC Configuration
+
+### RPC_URL
+
+RPC endpoint for connecting to the blockchain network.
+
+```bash
+RPC_URL=wss://mainnet.gateway.tenderly.co
+```
+
+**Examples by Network:**
+
+- **Mainnet:** `https://eth.llamarpc.com` or `https://base.llamarpc.com`
+- **Gnosis:** `https://1rpc.io/gnosis`
+- **Arbitrum:** `https://arb1.arbitrum.io/rpc`
+- **Base:** `https://base.llamarpc.com`
+- **Sepolia:** `https://sepolia.drpc.org`
+
+<Note>
+  See [https://chainlist.org](https://chainlist.org) or [https://llamarpc.com](https://llamarpc.com/eth) for more RPC endpoints.
+</Note>
+
+## Deployment Variables
+
+### RECEIVER
+
+**Required for deployment**
+
+Ethereum address that receives the converted fees (the `buyToken` recipient in CoW orders).
+
+```bash
+RECEIVER=0x1234567890123456789012345678901234567890
+```
+
+<Warning>
+  This address will receive all fee tokens. Ensure you control this address.
+</Warning>
+
+### WRAPPED_NATIVE_TOKEN
+
+**Required for deployment**
+
+ERC20 address of the wrapped native token you want to convert fees into.
+
+```bash
+WRAPPED_NATIVE_TOKEN=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+```
+
+**Examples by Network:**
+
+| Network | Token | Address |
+|---------|-------|--------|
+| Mainnet | WETH | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` |
+| Base | WETH | `0x4200000000000000000000000000000000000006` |
+| Arbitrum | WETH | `0x82aF49447D8a07e3bd95BD0d56f35241523fBab1` |
+| Sepolia | WETH | `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14` |
+
+### KEEPER
+
+**Required for deployment**
+
+Address of the keeper account - the only address with permission to execute `drip`, `approve`, and `revoke` operations on the Safe module.
+
+```bash
+KEEPER=0x1234567890123456789012345678901234567890
+```
+
+<Note>
+  The keeper's private key must be set with `PRIVATE_KEY` when running the keeper script.
+</Note>
+
+### SETTLEMENT
+
+**Required for deployment**
+
+CoW Protocol Settlement contract address. This is typically the same across networks.
+
+```bash
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+```
+
+<Note>
+  See [CoW Protocol contracts repository](https://github.com/cowprotocol/contracts/blob/main/networks.json) for official addresses.
+</Note>
+
+### APP_DATA
+
+**Required for deployment**
+
+32-byte hex value containing the hashed content of the CoW order's metadata.
+
+```bash
+APP_DATA=0xbcca8463f460f14bca0185afeeb75923ee4434612f41063d0171b1e743ffe84b
+```
+
+<Note>
+  Create your own app data value at [https://explorer.cow.fi/appdata](https://explorer.cow.fi/appdata)
+</Note>
+
+### TARGET_SAFE
+
+**Required for deployment**
+
+Address of the Safe (Gnosis Safe/Safe Wallet) that will use this module.
+
+```bash
+TARGET_SAFE=0x1234567890123456789012345678901234567890
+```
+
+<Warning>
+  **Important:** This Safe must be a **whitelisted CoW Protocol solver**. Contact the CoW Protocol team if you need solver access.
+</Warning>
+
+### MIN_OUT
+
+**Required for deployment**
+
+Minimum amount of `WRAPPED_NATIVE_TOKEN` (in atoms/wei) to accept as the `buyAmount` for orders. Fees that would result in less than this amount won't be extracted.
+
+```bash
+MIN_OUT=1000000000000000
+```
+
+**Example values:**
+
+- `1000000000000000` = 0.001 WETH (1e15 wei)
+- `10000000000000000` = 0.01 WETH (1e16 wei)
+- `100000000000000000` = 0.1 WETH (1e17 wei)
+
+<Note>
+  Set this threshold to avoid processing dust amounts that cost more in gas than they're worth.
+</Note>
+
+### SHOULD_ENABLE_MODULE
+
+**Optional for deployment**
+
+Whether to automatically enable the module on the Safe during deployment. Only useful for local Anvil setups.
+
+```bash
+SHOULD_ENABLE_MODULE=false
+```
+
+<Warning>
+  For production deployments, leave this as `false` and enable the module manually through the Safe UI.
+</Warning>
+
+## Contract Verification
+
+### ETHERSCAN_API_KEY
+
+**Required for contract verification**
+
+API key for verifying contracts on block explorers.
+
+```bash
+ETHERSCAN_API_KEY=your_api_key_here
+```
+
+**Block Explorer by Network:**
+
+- **Mainnet:** [Etherscan](https://etherscan.io/apis)
+- **Gnosis:** [Gnosisscan](https://gnosisscan.io/apis)
+- **Arbitrum:** [Arbiscan](https://arbiscan.io/apis)
+- **Base:** [Basescan](https://basescan.org/apis)
+- **Polygon:** [Polygonscan](https://polygonscan.com/apis)
+
+## Keeper Runtime Variables
+
+### PRIVATE_KEY
+
+**Required for keeper operations**
+
+Private key of the keeper account to sign and submit transactions.
+
+```bash
+PRIVATE_KEY=0xabcdef...
+```
+
+<Warning>
+  **Never commit your private key to version control.** Keep this in your local `.env` file only.
+</Warning>
+
+## Supported Networks
+
+The module supports the following networks (from `ts/config.ts`):
+
+| Network | Chain ID | Default RPC | CoW Explorer |
+|---------|----------|-------------|---------------|
+| mainnet | 1 | `https://eth.llamarpc.com` | [explorer.cow.fi](https://explorer.cow.fi) |
+| gnosis | 100 | `https://1rpc.io/gnosis` | [explorer.cow.fi/gc](https://explorer.cow.fi/gc) |
+| arbitrum | 42161 | `https://arb1.arbitrum.io/rpc` | [explorer.cow.fi/arb1](https://explorer.cow.fi/arb1) |
+| base | 8453 | `https://base.llamarpc.com` | [explorer.cow.fi/base](https://explorer.cow.fi/base) |
+| polygon | 137 | `https://polygon-rpc.com` | [explorer.cow.fi/pol](https://explorer.cow.fi/pol) |
+| avalanche | 43114 | `https://api.avax.network/ext/bc/C/rpc` | [explorer.cow.fi/avax](https://explorer.cow.fi/avax) |
+| bnb | 56 | `https://bsc-dataseed.bnbchain.org` | [explorer.cow.fi/bnb](https://explorer.cow.fi/bnb) |
+| linea | 59144 | `https://rpc.linea.build` | [explorer.cow.fi/linea](https://explorer.cow.fi/linea) |
+| plasma | 9745 | `https://rpc.plasma.to` | [explorer.cow.fi/plasma](https://explorer.cow.fi/plasma) |
+| ink | 57073 | `https://rpc-gel.inkonchain.com` | [explorer.cow.fi/ink](https://explorer.cow.fi/ink) |
+| sepolia | 11155111 | `https://sepolia.drpc.org` | [explorer.cow.fi/sepolia](https://explorer.cow.fi/sepolia) |
+
+## Example Configurations
+
+### Mainnet Configuration
+
+```bash .env
+RPC_URL=https://eth.llamarpc.com
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+TARGET_SAFE=0x...
+WRAPPED_NATIVE_TOKEN=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+KEEPER=0x...
+APP_DATA=0xbcca8463f460f14bca0185afeeb75923ee4434612f41063d0171b1e743ffe84b
+RECEIVER=0x...
+MIN_OUT=10000000000000000
+ETHERSCAN_API_KEY=your_etherscan_key
+```
+
+### Gnosis Chain Configuration
+
+```bash .env
+RPC_URL=https://1rpc.io/gnosis
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+TARGET_SAFE=0x...
+WRAPPED_NATIVE_TOKEN=0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d
+KEEPER=0x...
+APP_DATA=0xbcca8463f460f14bca0185afeeb75923ee4434612f41063d0171b1e743ffe84b
+RECEIVER=0x...
+MIN_OUT=10000000000000000000
+ETHERSCAN_API_KEY=your_gnosisscan_key
+```
+
+### Sepolia Testnet Configuration
+
+```bash .env
+RPC_URL=https://sepolia.drpc.org
+SETTLEMENT=0x9008D19f58AAbD9eD0D60971565AA8510560ab41
+TARGET_SAFE=0x...
+WRAPPED_NATIVE_TOKEN=0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14
+KEEPER=0x...
+APP_DATA=0xbcca8463f460f14bca0185afeeb75923ee4434612f41063d0171b1e743ffe84b
+RECEIVER=0x...
+MIN_OUT=1000000000000000
+ETHERSCAN_API_KEY=your_etherscan_key
+```
+
+## Next Steps
+
+After configuring your environment:
+
+1. [Deploy the CoW Fee Module](/getting-started/deployment)
+2. Enable the module on your Safe
+3. Run the keeper to automate fee collection

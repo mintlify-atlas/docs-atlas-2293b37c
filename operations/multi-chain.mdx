@@ -1,0 +1,496 @@
+---
+title: Multi-Chain Deployment
+description: Deploy and operate the COW Fee Module across multiple blockchain networks
+---
+
+The COW Fee Module supports deployment on all networks where CoW Protocol is available. Each network has specific considerations for deployment, RPC access, and operational parameters.
+
+## Supported Networks
+
+The module is deployed on the following networks:
+
+| Network | Chain ID | Module Address | Explorer |
+|---------|----------|----------------|----------|
+| Ethereum Mainnet | 1 | `0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2` | [CoW Explorer](https://explorer.cow.fi) |
+| Gnosis Chain | 100 | `0x264843e85f8449ee3e9436253f3b8c0282dd4795` | [CoW Explorer](https://explorer.cow.fi/gc) |
+| Polygon | 137 | `0xaf717efcfec02a65101e3ffb3c07234b8705cafc` | [CoW Explorer](https://explorer.cow.fi/pol) |
+| Arbitrum One | 42161 | `0xaf717efcfec02a65101e3ffb3c07234b8705cafc` | [CoW Explorer](https://explorer.cow.fi/arb1) |
+| Avalanche | 43114 | `0xaf717efcfec02a65101e3ffb3c07234b8705cafc` | [CoW Explorer](https://explorer.cow.fi/avax) |
+| BNB Chain | 56 | `0xab8bc499b69c56a0c14778ee162bfe245eb26ed9` | [CoW Explorer](https://explorer.cow.fi/bnb) |
+| Linea | 59144 | `0x94333F7b2dFc3bf7EBD4DBd161f6C8BC0C7d6510` | [CoW Explorer](https://explorer.cow.fi/linea) |
+| Base | 8453 | `0xb7ec643b48fe7730ef701d10362a9f8a670ac018` | [CoW Explorer](https://explorer.cow.fi/base) |
+| Plasma | 9745 | `0xEF0F60b1E985A748588d57e414aa3E9529b80714` | [CoW Explorer](https://explorer.cow.fi/plasma) |
+| Ink | 57073 | `0x406e71d2fc4871e1f18c076149ce0973dfe3e8f8` | [CoW Explorer](https://explorer.cow.fi/ink) |
+| Sepolia (Testnet) | 11155111 | `0x456ca0e6abf780140583ef3c8b5be2e7804278a6` | [CoW Explorer](https://explorer.cow.fi/sepolia) |
+
+<Info>
+All addresses are loaded from `networks.json` in the source repository. This file is updated with each deployment.
+</Info>
+
+## Network Configuration
+
+Each network has specific RPC endpoints and chain IDs configured in `ts/config.ts`:
+
+```typescript
+export const networkSpecificConfigs = {
+  mainnet: {
+    rpcUrl: "https://eth.llamarpc.com",
+    explorer: "https://explorer.cow.fi",
+    chainId: 1,
+  },
+  gnosis: {
+    rpcUrl: "https://1rpc.io/gnosis",
+    explorer: "https://explorer.cow.fi/gc",
+    chainId: 100,
+  },
+  arbitrum: {
+    rpcUrl: "https://arb1.arbitrum.io/rpc",
+    explorer: "https://explorer.cow.fi/arb1",
+    chainId: 42161,
+  },
+  // ... etc
+};
+```
+
+<Tip>
+You can override the default RPC URL using the `--rpc-url` CLI option when running the keeper.
+</Tip>
+
+## Network-Specific Considerations
+
+### Ethereum Mainnet
+
+**Gas Costs**: Highest among all supported networks. Consider:
+
+- Setting appropriate `--max-fee-per-gas` and `--max-priority-fee-per-gas`
+- Increasing `minOut` to ensure gas costs don't exceed fee value
+- Running keeper less frequently during high gas periods
+
+**Token Discovery**: Use `--token-list-strategy explorer` (default)
+
+- Ethplorer API provides fast token discovery
+- No RPC calls needed for initial token list
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network mainnet \
+  --module 0x8429bf5bad17925c364c8c30a3c2a1e0d76602d2 \
+  --token-list-strategy explorer \
+  --max-orders 100 \
+  --buy-amount-slippage-bps 100
+```
+
+### Gnosis Chain
+
+**Gas Costs**: Very low, making it ideal for frequent keeper runs
+
+**Token Discovery**: Use `--token-list-strategy explorer`
+
+- Blockscout API available for Gnosis Chain
+- Fast token discovery without RPC overhead
+
+**Native Token**: xDAI (wrapped version is WXDAI)
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network gnosis \
+  --module 0x264843e85f8449ee3e9436253f3b8c0282dd4795 \
+  --token-list-strategy explorer \
+  --max-orders 250
+```
+
+### Arbitrum One
+
+**Gas Costs**: Low, but can spike during high network usage
+
+**Token Discovery**: Use `--token-list-strategy chain`
+
+- No Ethplorer support for Arbitrum
+- Chain strategy scans Trade events
+
+**Block Time**: ~0.25 seconds (very fast)
+
+- Increase `--lookback-range` for same time coverage
+- Consider `--lookback-range 4000` for ~16 minutes of history
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network arbitrum \
+  --module 0xaf717efcfec02a65101e3ffb3c07234b8705cafc \
+  --token-list-strategy chain \
+  --lookback-range 4000 \
+  --max-orders 250
+```
+
+### Base
+
+**Gas Costs**: Low, comparable to other L2s
+
+**Token Discovery**: Use `--token-list-strategy chain`
+
+**Block Time**: ~2 seconds
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network base \
+  --module 0xb7ec643b48fe7730ef701d10362a9f8a670ac018 \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+### Polygon
+
+**Gas Costs**: Very low
+
+**Token Discovery**: Use `--token-list-strategy chain`
+
+**Block Time**: ~2 seconds
+
+**RPC Considerations**: Public RPCs can be rate-limited; consider using a dedicated RPC provider
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network polygon \
+  --module 0xaf717efcfec02a65101e3ffb3c07234b8705cafc \
+  --token-list-strategy chain \
+  --rpc-url https://your-rpc-provider.com \
+  --lookback-range 1000
+```
+
+### Avalanche
+
+**Gas Costs**: Moderate
+
+**Token Discovery**: Use `--token-list-strategy chain`
+
+**Block Time**: ~2 seconds
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network avalanche \
+  --module 0xaf717efcfec02a65101e3ffb3c07234b8705cafc \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+### BNB Chain
+
+**Gas Costs**: Low
+
+**Token Discovery**: Use `--token-list-strategy chain`
+
+**Block Time**: ~3 seconds
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network bnb \
+  --module 0xab8bc499b69c56a0c14778ee162bfe245eb26ed9 \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+### Linea, Plasma, Ink
+
+**Status**: Newer networks with growing CoW Protocol adoption
+
+**Token Discovery**: Use `--token-list-strategy chain`
+
+**Recommended Configuration**: Start conservative with lower `--max-orders` and monitor
+
+### Sepolia Testnet
+
+**Purpose**: Testing and development
+
+**Token Discovery**: Use `--token-list-strategy chain`
+
+**Testnet Tokens**: Use faucets to get testnet ETH and tokens
+
+**Recommended Configuration**:
+
+```bash
+yarn ts-node index.ts \
+  --network sepolia \
+  --module 0x456ca0e6abf780140583ef3c8b5be2e7804278a6 \
+  --token-list-strategy chain \
+  --lookback-range 500
+```
+
+## Deploying to a New Network
+
+<Steps>
+
+<Step title="Prepare deployment environment">
+Set environment variables in `.env`:
+
+```bash
+SETTLEMENT=<settlement-contract-address>
+TARGET_SAFE=<safe-address>
+WRAPPED_NATIVE_TOKEN=<weth-address>
+KEEPER=<keeper-address>
+APP_DATA=<app-data-hash>
+RECEIVER=<receiver-address>
+MIN_OUT=<min-output-in-wei>
+ETHERSCAN_API_KEY=<block-explorer-api-key>
+```
+</Step>
+
+<Step title="Test deployment with dry run">
+
+```bash
+forge script ./script/DeployCOWFeeModule.s.sol \
+  --rpc-url <rpc-url>
+```
+
+Review the deployment parameters and estimated gas costs.
+</Step>
+
+<Step title="Deploy and verify">
+
+```bash
+forge script ./script/DeployCOWFeeModule.s.sol \
+  --rpc-url <rpc-url> \
+  --broadcast \
+  --verify \
+  --private-key <deployer-private-key>
+```
+
+<Info>
+The deployment will automatically verify the contract on the block explorer if `ETHERSCAN_API_KEY` is set.
+</Info>
+</Step>
+
+<Step title="Record deployment in networks.json">
+Add the deployment to `networks.json`:
+
+```json
+{
+  "COWFeeModule": {
+    "<chain-id>": {
+      "address": "0x...",
+      "transactionHash": "0x..."
+    }
+  }
+}
+```
+</Step>
+
+<Step title="Enable module on Safe">
+Use the [Safe Transaction Builder](https://app.safe.global/share/safe-app?appUrl=https%3A%2F%2Fapps-portal.safe.global%2Ftx-builder):
+
+1. Navigate to the target Safe on the correct network
+2. Open Transaction Builder app
+3. Enter the Safe address as the recipient
+4. Click "Use Implementation ABI"
+5. Select `enableModule(address)` function
+6. Enter the deployed module address
+7. Click "Add transaction" and "Send batch"
+8. Sign and execute the transaction
+</Step>
+
+<Step title="Test keeper operation">
+Run the keeper in test mode:
+
+```bash
+yarn ts-node index.ts \
+  --network <network-name> \
+  --module <deployed-address> \
+  --token-list-strategy chain \
+  --lookback-range 500 \
+  --confirm-drip
+```
+
+Verify:
+- Configuration loads correctly
+- Token discovery works
+- Quotes are retrieved successfully
+</Step>
+
+</Steps>
+
+## Validating Deployment Parameters
+
+After deploying a new module (or when comparing with an existing deployment), use the `compare-deployments.ts` script:
+
+```bash
+yarn ts-node compare-deployments.ts \
+  --network mainnet \
+  0x<new-module-address>
+```
+
+### What It Checks
+
+The script compares the new module's parameters with the currently enabled module on the Safe:
+
+```typescript
+interface ModuleParameters {
+  receiver: string;           // Where wrapped native tokens are sent
+  wrappedNativeToken: string; // WETH/WXDAI/etc address
+  vaultRelayer: string;       // CoW Protocol Vault Relayer
+  gpv2Settlement: string;     // CoW Protocol Settlement contract
+  keeper: string;             // Keeper address
+  appData: string;            // App data hash for orders
+  targetSafe: string;         // Safe the module operates on
+  minOut: string;             // Minimum output in native token (formatted)
+}
+```
+
+### Example Output
+
+```
+Module parameters:
+ {
+  receiver: '0x...',
+  wrappedNativeToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+  vaultRelayer: '0xC92E8bdf79f0507f65a392b0ab4667716BFE0110',
+  gpv2Settlement: '0x9008D19f58AAbD9eD0D60971565AA8510560ab41',
+  keeper: '0x...',
+  appData: '0x...',
+  targetSafe: '0x...',
+  minOut: '0.01'
+}
+
+The wrapped native token is "Wrapped Ether". The min out is 0.01 WETH
+
+🚨 Different parameter: minOut
+  Value currently in use: 0.005
+  New value:              0.01
+```
+
+This highlights any parameter changes between deployments.
+
+<Warning>
+Review all parameter differences carefully before enabling a new module. Some changes (like increasing `minOut`) may affect keeper operation.
+</Warning>
+
+## Multi-Chain Monitoring
+
+When operating across multiple networks:
+
+### Centralized Monitoring
+
+- Set up a dashboard tracking all network deployments
+- Monitor keeper wallet balances on each network
+- Track successful drip calls and collected fees per network
+- Set up alerts for failed transactions or low balances
+
+### Per-Network Metrics
+
+Track these metrics separately for each network:
+
+- **Fee collection volume**: Total value collected per time period
+- **Gas efficiency**: Gas spent vs. fees collected ratio
+- **Token diversity**: Number of unique tokens swapped
+- **Failure rate**: Failed transactions vs. successful
+- **Order fill rate**: Percentage of orders filled on CoW Protocol
+
+### Keeper Wallet Management
+
+For multi-chain operations:
+
+- Use the same keeper address across all networks (simpler) or different addresses per network (better security isolation)
+- Maintain sufficient native token balance on each network for gas
+- Set up automatic balance alerts before running out of gas funds
+- Consider using a relayer service for critical networks
+
+## Cross-Chain Considerations
+
+### Parameter Consistency
+
+While parameters can differ per network, consider standardizing:
+
+- `receiver`: Often the same Safe across networks
+- `keeper`: Same address for operational simplicity
+- `appData`: Same app data hash for consistent order identification
+
+### Network-Specific Parameters
+
+- `minOut`: Adjust based on gas costs and token prices on each network
+- `wrappedNativeToken`: Network-specific (WETH on Ethereum, WXDAI on Gnosis, etc.)
+- `settlement` and `vaultRelayer`: CoW Protocol's deployment addresses per network
+
+### Operational Scheduling
+
+Consider different keeper schedules per network:
+
+- **High gas networks** (Ethereum): Less frequent, during low gas periods
+- **Low gas networks** (Gnosis, L2s): More frequent, every few hours
+- **Low volume networks**: Daily or on-demand
+
+## Troubleshooting Multi-Chain
+
+### Network-Specific Issues
+
+#### RPC Connection Failures
+
+**Symptoms**: Timeout errors, connection refused
+
+**Solutions**:
+- Use `--rpc-url` with a reliable RPC provider
+- Try alternative RPC endpoints from `networkSpecificConfigs`
+- Check if the network is experiencing downtime
+
+#### Chain Strategy Not Finding Tokens
+
+**Symptoms**: 0 tokens found after scanning
+
+**Solutions**:
+- Increase `--lookback-range` to scan more blocks
+- Verify Settlement contract has recent Trade events
+- Check that you're connected to the correct network
+
+#### Different Wrapped Native Token
+
+**Symptoms**: Orders created with wrong buy token
+
+**Solutions**:
+- Verify module deployment used correct `WRAPPED_NATIVE_TOKEN`
+- Check `compare-deployments.ts` output
+- Redeploy module if address is incorrect
+
+### Deployment Validation
+
+Before running keeper on a new network:
+
+1. ✅ Verify module is enabled on the Safe
+2. ✅ Check all deployment parameters with `compare-deployments.ts`
+3. ✅ Ensure keeper address matches private key
+4. ✅ Confirm Settlement contract address is correct for the network
+5. ✅ Test with `--confirm-drip` flag first
+6. ✅ Verify wrapped native token address is correct
+
+## Best Practices
+
+### Deployment
+
+- Always test on Sepolia before deploying to mainnet or production networks
+- Use consistent parameters across networks where possible
+- Document any network-specific configuration decisions
+- Keep `networks.json` updated with all deployments
+
+### Operations
+
+- Start with conservative `--max-orders` on new networks
+- Monitor gas costs vs. fee collection on each network
+- Adjust `minOut` based on network gas prices and token values
+- Use dedicated RPC endpoints for production keeper operations
+
+### Security
+
+- Use the same security standards across all networks
+- Don't reuse deployer private keys as keeper keys
+- Implement the same monitoring and alerting on all networks
+- Regular security audits should cover multi-chain deployment patterns

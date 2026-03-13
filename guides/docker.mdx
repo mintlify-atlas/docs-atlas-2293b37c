@@ -1,0 +1,403 @@
+---
+title: 'Using Docker'
+description: 'Run the CoW Fee keeper operations using Docker'
+---
+
+## Overview
+
+The CoW Fee Module includes Docker support for running keeper operations in a containerized environment. This approach provides consistency across different environments and simplifies deployment.
+
+## Dockerfile Overview
+
+The project includes a Dockerfile that sets up a Node.js environment for running the keeper script.
+
+```dockerfile Dockerfile
+FROM node:lts
+
+# Set working directory
+WORKDIR /app
+
+# Copy package.json and yarn.lock files
+COPY package.json yarn.lock ./
+
+# Install dependencies with yarn
+RUN yarn
+
+# Copy the rest of the application code
+COPY . .
+
+# Run the script with yarn ts-node index.ts
+ENTRYPOINT ["yarn", "ts-node", "index.ts"]
+```
+
+The Dockerfile:
+- Uses the official Node.js LTS image as the base
+- Installs all dependencies using Yarn
+- Copies the entire application code into the container
+- Sets the entrypoint to run the keeper script via `ts-node`
+
+## Building the Docker Image
+
+<Steps>
+  <Step title="Navigate to project directory">
+    Ensure you're in the root directory of the cow-fee project:
+
+    ```bash
+    cd /path/to/cow-fee
+    ```
+  </Step>
+
+  <Step title="Build the image">
+    Build the Docker image with a tag name:
+
+    ```bash
+    docker build -t cow-fee .
+    ```
+
+    This command:
+    - `-t cow-fee` tags the image as "cow-fee"
+    - `.` uses the current directory as the build context
+  </Step>
+
+  <Step title="Verify the build">
+    Check that the image was created successfully:
+
+    ```bash
+    docker images | grep cow-fee
+    ```
+  </Step>
+</Steps>
+
+## Running the Container
+
+Once the image is built, you can run the keeper operations in a Docker container.
+
+### Basic Usage
+
+```bash
+source .env
+
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --max-orders 250 \
+  --rpc-url $RPC_URL \
+  --buy-amount-slippage-bps 100 \
+  --module <module-address> \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+### Parameters Explained
+
+#### Docker Options
+
+- `--rm`: Automatically remove the container when it exits
+- `-e PRIVATE_KEY=$PRIVATE_KEY`: Pass the keeper's private key as an environment variable
+
+#### Keeper Options
+
+- `--network`: The blockchain network to use (choices: "mainnet", "gnosis", "arbitrum", "base", "sepolia")
+- `--rpc-url`: The RPC endpoint URL for connecting to the blockchain
+- `--max-orders`: Maximum number of orders to place in a single drip call (default: 250)
+- `--buy-amount-slippage-bps`: Tolerance to add to the quoted buyAmount in basis points (default: 100)
+- `--module`: The deployed COWFeeModule contract address
+- `--token-list-strategy`: Strategy for getting the token list ("explorer" or "chain", default: "explorer")
+- `--lookback-range`: Number of blocks to check for Trade events (default: 1000)
+
+## Environment Variables
+
+The keeper requires the following environment variables:
+
+### Required
+
+```bash .env
+# Keeper's private key for signing transactions
+PRIVATE_KEY=0x...
+
+# RPC endpoint URL
+RPC_URL=https://eth.llamarpc.com
+```
+
+### Loading Environment Variables
+
+Before running the Docker container, load your environment variables:
+
+```bash
+source .env
+```
+
+This ensures that variables like `$PRIVATE_KEY` and `$RPC_URL` are available to pass to the container.
+
+## Network-Specific Examples
+
+### Ethereum Mainnet
+
+```bash
+source .env
+
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --rpc-url https://eth.llamarpc.com \
+  --max-orders 250 \
+  --buy-amount-slippage-bps 100 \
+  --module 0xYourModuleAddress \
+  --token-list-strategy explorer \
+  --lookback-range 1000
+```
+
+### Gnosis Chain
+
+```bash
+source .env
+
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network gnosis \
+  --rpc-url https://1rpc.io/gnosis \
+  --max-orders 250 \
+  --buy-amount-slippage-bps 100 \
+  --module 0xYourModuleAddress \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+### Base
+
+```bash
+source .env
+
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network base \
+  --rpc-url https://base.llamarpc.com \
+  --max-orders 250 \
+  --buy-amount-slippage-bps 100 \
+  --module 0xYourModuleAddress \
+  --token-list-strategy explorer \
+  --lookback-range 1000
+```
+
+### Sepolia Testnet
+
+```bash
+source .env
+
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network sepolia \
+  --rpc-url https://sepolia.drpc.org \
+  --max-orders 250 \
+  --buy-amount-slippage-bps 100 \
+  --module 0xYourModuleAddress \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+## Advanced Usage
+
+### Running with Custom Environment File
+
+You can pass an environment file directly to Docker:
+
+```bash
+docker run --rm \
+  --env-file .env.production \
+  cow-fee \
+  --network mainnet \
+  --rpc-url $RPC_URL \
+  --module 0xYourModuleAddress
+```
+
+### Running in Detached Mode
+
+To run the container in the background:
+
+```bash
+docker run -d \
+  --name cow-fee-keeper \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --rpc-url $RPC_URL \
+  --module 0xYourModuleAddress
+```
+
+View logs:
+
+```bash
+docker logs -f cow-fee-keeper
+```
+
+Stop the container:
+
+```bash
+docker stop cow-fee-keeper
+```
+
+### Persistent Logging
+
+To save logs to a file on the host:
+
+```bash
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --rpc-url $RPC_URL \
+  --module 0xYourModuleAddress \
+  2>&1 | tee keeper-logs.txt
+```
+
+## Token List Strategies
+
+The keeper supports two strategies for fetching the token list:
+
+### Explorer Strategy (Default)
+
+Uses external APIs like Ethplorer or Blockscout to get token balances:
+
+```bash
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --rpc-url $RPC_URL \
+  --module 0xYourModuleAddress \
+  --token-list-strategy explorer
+```
+
+**Pros**: Faster, less RPC calls
+**Cons**: Depends on external API availability
+
+### Chain Strategy
+
+Fetches tokens directly from the blockchain by querying Settlement `Trade` events:
+
+```bash
+docker run --rm \
+  -e PRIVATE_KEY=$PRIVATE_KEY \
+  cow-fee \
+  --network mainnet \
+  --rpc-url $RPC_URL \
+  --module 0xYourModuleAddress \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+**Pros**: No external dependencies, more reliable
+**Cons**: More RPC calls, configure `--lookback-range` appropriately
+
+## Troubleshooting
+
+### Container Fails to Start
+
+**Issue**: Container exits immediately
+
+**Solutions**:
+1. Check that `PRIVATE_KEY` is set correctly:
+   ```bash
+   echo $PRIVATE_KEY
+   ```
+
+2. Verify the module address is correct
+
+3. Test RPC connectivity:
+   ```bash
+   curl -X POST $RPC_URL \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+   ```
+
+### RPC Connection Errors
+
+**Issue**: "Connection refused" or timeout errors
+
+**Solutions**:
+1. Verify your RPC URL is accessible
+2. Check if the RPC provider has rate limits
+3. Try a different RPC provider from [ChainList](https://chainlist.org)
+
+### Out of Gas Errors
+
+**Issue**: Transactions fail with out of gas
+
+**Solutions**:
+1. Reduce `--max-orders` to process fewer tokens per transaction
+2. Ensure the keeper wallet has sufficient native token balance for gas
+
+### Module Not Enabled Error
+
+**Issue**: "OnlyKeeper" or permission errors
+
+**Solutions**:
+1. Verify the module is enabled on the Safe (see [Enabling the Module](/guides/enabling-module))
+2. Confirm the keeper address matches the one set during deployment
+3. Check that the Safe is a whitelisted solver
+
+### Image Rebuild Required
+
+**Issue**: Code changes not reflected in container
+
+**Solution**: Rebuild the Docker image:
+```bash
+docker build -t cow-fee . --no-cache
+```
+
+## Running Directly (Without Docker)
+
+If you prefer to run the keeper without Docker:
+
+```bash
+source .env
+
+yarn ts-node index.ts \
+  --network mainnet \
+  --max-orders 250 \
+  --rpc-url $RPC_URL \
+  --buy-amount-slippage-bps 100 \
+  --module <module-address> \
+  --token-list-strategy chain \
+  --lookback-range 1000
+```
+
+This requires Node.js and all dependencies installed locally.
+
+## Production Considerations
+
+<Warning>
+  Never commit your `.env` file or expose your `PRIVATE_KEY`. Use secure secret management solutions in production.
+</Warning>
+
+### Security Best Practices
+
+1. Use environment-specific `.env` files (`.env.production`, `.env.staging`)
+2. Rotate keeper keys regularly
+3. Use a dedicated wallet for keeper operations with minimal funding
+4. Monitor keeper transactions for anomalies
+
+### Monitoring and Logging
+
+1. Set up log aggregation for production deployments
+2. Monitor keeper wallet balance to ensure it has gas
+3. Track successful vs. failed order submissions
+4. Set up alerts for transaction failures
+
+### Automation
+
+Consider running the Docker container as a scheduled job or using orchestration tools like:
+
+- **Cron** for periodic execution
+- **Docker Compose** for managing multiple containers
+- **Kubernetes** for production-grade orchestration
+- **systemd** for running as a system service
+
+<Tip>
+  Start with small `--max-orders` values in production and gradually increase as you validate the keeper's behavior.
+</Tip>

@@ -1,0 +1,130 @@
+---
+title: Installation
+description: Set up your development environment for the CoW Fee Module
+---
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) - Ethereum development toolkit
+- [Node.js](https://nodejs.org/) (v20 or later)
+- [Yarn](https://yarnpkg.com/) package manager
+
+## Install Foundry
+
+<Steps>
+  <Step title="Download and install Foundry">
+    Run the following command to install Foundry:
+    
+    ```bash
+    curl -L https://foundry.paradigm.xyz | bash
+    ```
+  </Step>
+  
+  <Step title="Update Foundry">
+    After installation, run `foundryup` to update to the latest version:
+    
+    ```bash
+    foundryup
+    ```
+  </Step>
+  
+  <Step title="Verify installation">
+    Verify that Foundry is installed correctly:
+    
+    ```bash
+    forge --version
+    ```
+  </Step>
+</Steps>
+
+## Clone the Repository
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/cowprotocol/cow-fee.git
+    cd cow-fee
+    ```
+  </Step>
+  
+  <Step title="Install dependencies">
+    Install both Solidity and TypeScript dependencies:
+    
+    <CodeGroup>
+    ```bash forge
+    forge install
+    ```
+    
+    ```bash yarn
+    yarn install
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Dependencies
+
+### TypeScript Dependencies
+
+The project uses the following main dependencies:
+
+- **@cowprotocol/cow-sdk** (v8.0.0) - CoW Protocol SDK for interacting with the CoW API
+- **@cowprotocol/app-data** (v3.0.0) - Library for handling CoW order metadata
+- **ethers** (v5) - Ethereum library for wallet and contract interactions
+- **commander** (v12.0.0) - CLI framework for the keeper script
+- **axios** (v1.6.8) - HTTP client for API requests
+
+### Development Dependencies
+
+- **TypeScript** (v5.4.5) - Type-safe JavaScript
+- **ts-node** (v10.9.2) - TypeScript execution engine
+- **Jest** (v29.7.0) - Testing framework
+- **ts-jest** (v29.1.2) - Jest transformer for TypeScript
+
+## Environment Setup
+
+<Steps>
+  <Step title="Create environment file">
+    Copy the example environment file:
+    
+    ```bash
+    cp .env.example .env
+    ```
+  </Step>
+  
+  <Step title="Configure variables">
+    Edit `.env` and set the required configuration variables. See [Configuration](/getting-started/configuration) for details.
+  </Step>
+</Steps>
+
+<Note>
+  You must configure all required environment variables before deploying or running the keeper.
+</Note>
+
+## Run Tests
+
+Verify your setup by running the test suite:
+
+<CodeGroup>
+```bash forge tests
+forge test -vvv --rpc-url wss://mainnet.gateway.tenderly.co
+```
+
+```bash typescript tests
+yarn test
+```
+</CodeGroup>
+
+<Note>
+  The Foundry tests require an RPC endpoint. You can use the default Tenderly endpoint or configure your own in `.env`.
+</Note>
+
+## Next Steps
+
+Now that your development environment is set up:
+
+1. [Configure environment variables](/getting-started/configuration)
+2. [Deploy the CoW Fee Module](/getting-started/deployment)
+3. Enable the module on your Safe

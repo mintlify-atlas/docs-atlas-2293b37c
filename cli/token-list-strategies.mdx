@@ -1,0 +1,166 @@
+---
+title: Token List Strategies
+description: Methods for discovering tokens held by the Settlement contract
+---
+
+The keeper bot needs to discover which tokens are held by the Settlement contract in order to create swap orders. Two strategies are available:
+
+## Explorer Strategy
+
+The `explorer` strategy uses block explorer APIs to fetch token balances. This is the **default strategy**.
+
+```bash
+--token-list-strategy explorer
+```
+
+### How It Works
+
+The explorer strategy queries external APIs to get a list of all ERC-20 tokens and their balances:
+
+- **Ethereum Mainnet**: Uses the [Ethplorer API](https://ethplorer.io)
+- **Gnosis Chain**: Uses the [Blockscout API](https://gnosis.blockscout.com)
+
+### Ethplorer (Mainnet)
+
+For Ethereum Mainnet, the keeper bot calls:
+
+```
+GET https://api.ethplorer.io/getAddressInfo/{address}?apiKey=freekey
+```
+
+This returns all tokens with their balances, decimals, and symbols. Implementation in `ts/drip/getTokenBalances.ts:27-40`.
+
+### Blockscout (Gnosis)
+
+For Gnosis Chain, the keeper bot calls:
+
+```
+GET https://gnosis.blockscout.com/api/v2/addresses/{address}/token-balances
+```
+
+The response is filtered to only include ERC-20 tokens. Implementation in `ts/drip/getTokenBalances.ts:53-68`.
+
+### Advantages
+
+- **Fast**: Single API call returns all token balances
+- **Complete**: Includes token metadata (name, symbol, decimals)
+- **Reliable**: Uses established block explorer APIs
+
+### Limitations
+
+- **Network-specific**: Only works on networks with supported explorers (Mainnet and Gnosis)
+- **External dependency**: Relies on third-party API availability
+- **Rate limits**: May be subject to API rate limiting
+
+## Chain Strategy
+
+The `chain` strategy discovers tokens by querying on-chain `Trade` events from the Settlement contract.
+
+```bash
+--token-list-strategy chain
+```
+
+### How It Works
+
+The chain strategy scans recent Settlement `Trade` events to find which tokens have been traded:
+
+1. Fetches `Trade` events from the last N blocks (configured by `--lookback-range`)
+2. Extracts both `sellToken` and `buyToken` from each event
+3. Creates a unique list of all tokens that have been traded
+4. Fetches decimals for each token using multicall
+
+Implementation in `ts/drip/getTokenBalances.ts:112-159`.
+
+### Block Range Chunking
+
+To avoid exceeding RPC node response limits, the keeper bot chunks the block range into segments:
+
+```typescript
+const LOG_FILTER_RANGE = 1000;
+const chunks = chunkRange(
+  currentBlock - config.lookbackRange,
+  currentBlock,
+  LOG_FILTER_RANGE
+);
+```
+
+This queries logs in batches of 1000 blocks at a time. See `ts/drip/getTokenBalances.ts:97-137`.
+
+### Lookback Range
+
+The `--lookback-range` parameter controls how many historical blocks to scan:
+
+```bash
+--lookback-range 1000  # Scan last 1000 blocks (default)
+```
+
+- **Smaller range**: Faster queries, but may miss tokens that haven't traded recently
+- **Larger range**: More complete token discovery, but slower and may hit RPC limits
+
+### Advantages
+
+- **Network-agnostic**: Works on any network with Settlement contract
+- **No external dependencies**: Uses only on-chain data via RPC
+- **Censorship-resistant**: Doesn't rely on centralized APIs
+
+### Limitations
+
+- **Slower**: Requires scanning event logs across multiple blocks
+- **Incomplete metadata**: Doesn't fetch token names/symbols (only decimals)
+- **Lookback window**: Only discovers tokens traded in the specified block range
+- **RPC intensive**: May be rate-limited by RPC providers
+
+## Comparison
+
+| Feature | Explorer | Chain |
+|---------|----------|-------|
+| **Speed** | Fast (1 API call) | Slower (event scanning) |
+| **Networks** | Mainnet, Gnosis only | All networks |
+| **Dependencies** | External APIs | RPC node only |
+| **Token Metadata** | Complete | Decimals only |
+| **Completeness** | All tokens | Recent trades only |
+| **Rate Limits** | API limits | RPC limits |
+
+## Choosing a Strategy
+
+### Use Explorer When:
+
+- Running on Ethereum Mainnet or Gnosis Chain
+- You need fast, comprehensive token discovery
+- External API dependency is acceptable
+
+### Use Chain When:
+
+- Running on networks without explorer API support (Arbitrum, Base, Sepolia)
+- You want to avoid external dependencies
+- You need censorship resistance
+- You're okay with potentially missing tokens that haven't traded recently
+
+## Implementation Reference
+
+The token discovery logic is implemented in `ts/drip/getTokenBalances.ts:161-182`:
+
+```typescript
+export const getTokenBalances = async (
+  address: string,
+  network: IConfig["network"],
+  strategy: "explorer" | "chain",
+  config: IConfig
+): Promise<ITokenInfo[]> => {
+  switch (strategy) {
+    case "explorer": {
+      switch (network) {
+        case "mainnet": {
+          return getTokenInfosFromEthPlorer(address);
+        }
+        case "gnosis": {
+          return getTokenInfosFromBlockscout(address);
+        }
+      }
+    }
+    case "chain": {
+      return getTokenInfosFromChain(config);
+    }
+  }
+};
+```
